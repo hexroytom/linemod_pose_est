@@ -263,27 +263,27 @@ public:
              cv::Mat mat_gray;
              cvtColor (mat_rgb,mat_gray,CV_BGR2GRAY);
 
-             cv::Mat mask=cv::Mat::zeros (480,640,CV_8UC1);
-             cv::Rect roi_rect=cv::Rect(0,55,635,239);
-             mask(roi_rect)=255;
+             cv::Mat Mask=cv::Mat::zeros (480,640,CV_8UC1);
+             cv::Rect roi_rect=cv::Rect(125,0,391,326);//baxter table 0,55,635,239
+             Mask(roi_rect)=255;
              std::vector<cv::Mat> masks;
-             masks.push_back (mask);
-             masks.push_back (mask);
+             masks.push_back (Mask);
+             masks.push_back (Mask);
              //perform the detection
              sources.push_back (mat_rgb);
              sources.push_back (mat_depth);
              std::vector<linemod::Match> matches;
              detector->match (sources,threshold,matches,std::vector<String>(),noArray(),masks);
 
-             for(std::vector<linemod::Match>::iterator it=matches.begin();it!=matches.end();++it)
-             {
+//             for(std::vector<linemod::Match>::iterator it=matches.begin();it!=matches.end();++it)
+//             {
 
-                 Mat display=mat_rgb;
-                 std::vector<cv::linemod::Template> templates=detector->getTemplates(it->class_id, it->template_id);
-                 drawResponse(templates, 2, display,cv::Point(it->x,it->y), detector->getT(0));
-                 imshow("display",display);
-                 cv::waitKey (1);
-             }
+//                 Mat display=mat_rgb;
+//                 std::vector<cv::linemod::Template> templates=detector->getTemplates(it->class_id, it->template_id);
+//                 drawResponse(templates, 2, display,cv::Point(it->x,it->y), detector->getT(0));
+//                 imshow("display",display);
+//                 cv::waitKey (1);
+//             }
 
              //convert the depth image to 3d pointcloud
              cv::Mat_<cv::Vec3f> depth_real_ref_raw;
@@ -294,48 +294,144 @@ public:
 
              //pci_real_nonICP_model->clear ();
             // pci_real_1stICP_model->clear ();
+//----------------3D Voting-----------------------------------------------------//
 
-             unsigned int *accumulator =(unsigned int*)calloc (64*48*50,sizeof(unsigned int));
-             std::map<unsigned int, std::vector<linemod::Match> > map_templates;
+             unsigned int *accumulator =(unsigned int*)calloc (64*48*100,sizeof(unsigned int));
+             std::map<unsigned int, std::vector<linemod::Match> > map_match;
              int max_index=0;
              int max_vote=0;
 
              BOOST_FOREACH(const linemod::Match& match,matches){
                  //get the pose
-                 cv::Matx33d R_match = Rs_[match.template_id].clone();// rotation of the object w.r.t to the view point
-                 cv::Vec3d T_match = Ts_[match.template_id].clone();//the translation of the camera with respect to the current view point
-                 cv::Mat K_matrix= Ks_[match.template_id].clone();
                  float D_match = Distances_[match.template_id];//the distance from the center of object surface to the camera origin
 
                  int row_index=match.x/10;//10  step
                  int col_index=match.y/10;
-                 int dist_index=D_match/20.0;//20 distance step
+                 int dist_index=D_match/10;//10 distance step
                  int index=dist_index*64*48+row_index*64+col_index;
                  accumulator[index]++;
-                 if(map_templates.find (index)==map_templates.end ())
+                 if(map_match.find (index)==map_match.end ())
                  {
                      std::vector<linemod::Match> temp;
                      temp.push_back (match);
-                     map_templates.insert(pair<unsigned int,std::vector<linemod::Match> >(index,temp));
+                     map_match.insert(pair<unsigned int,std::vector<linemod::Match> >(index,temp));
                  }
                  else
                  {
-                     map_templates[index].push_back(match);
+                     map_match[index].push_back(match);
                  }
-                 for(int i=0;i<48*64*50;++i)
-                 {
-                     if(accumulator[i]>max_vote)
-                     {
-                         max_vote=accumulator[i];
-                         max_index=i;
-                     }
 
-                 }
              }
 
+             //looking for max vote
+             #pragma omp parallel for
+             for(int i=0;i<48*64*100;++i)
+             {
+                 if(accumulator[i]>max_vote)
+                 {
+                     max_vote=accumulator[i];
+                     max_index=i;
+                 }
 
+             }
+
+             //if too few votes,reject
+             if(max_vote<2)
+                 return;
+
+
+             //get matches according to the index
+             std::vector<linemod::Match> match_result;
+             match_result=map_match[max_index];
+
+             //only withdraw the first match of the matches
+             linemod::Match match=match_result[0];
+
+             Mat display=mat_rgb;
+             std::vector<cv::linemod::Template> templates=detector->getTemplates(match.class_id, match.template_id);
+             drawResponse(templates, 2, display,cv::Point(match.x,match.y), detector->getT(0));
+             imshow("display",display);
+             cv::waitKey (1);
+
+//-----------------------------------------------------------------------------//
+
+//-----------------------------2D Voting---------------------------------------//
+//             unsigned int *accumulator =(unsigned int*)calloc (64*48,sizeof(unsigned int));
+//             std::map<unsigned int, std::vector<linemod::Match> > map_match;
+//             int max_index_xy=0;
+//             int max_vote_xy=0;
+//             BOOST_FOREACH(const linemod::Match& match,matches){
+//                              int row_index=match.x/10;//10  step
+//                              int col_index=match.y/10;
+//                              int index=row_index*64+col_index;
+//                              accumulator[index]++;
+//                              if(map_match.find (index)==map_match.end ())
+//                              {
+//                                  std::vector<linemod::Match> temp;
+//                                  temp.push_back (match);
+//                                  map_match.insert(pair<unsigned int,std::vector<linemod::Match> >(index,temp));
+//                              }
+//                              else
+//                              {
+//                                  map_match[index].push_back(match);
+//                              }
+
+//                          }
+
+//             for(int i=0;i<48*64;++i)
+//             {
+//                 if(accumulator[i]>max_vote_xy)
+//                 {
+//                     max_vote_xy=accumulator[i];
+//                     max_index_xy=i;
+//                 }
+
+//             }
+
+//             //get matches according to the index
+//             std::vector<linemod::Match> xyVote_result;
+//             xyVote_result=map_match[max_index_xy];
+
+//            unsigned int *dist_accumulator =(unsigned int*)calloc (100,sizeof(unsigned int));
+//            std::map<unsigned int, std::vector<linemod::Match> > map_dist_match;
+//            int max_index_dist=0;
+//            int max_vote_dist=0;
+//            BOOST_FOREACH(const linemod::Match& match, xyVote_result){
+//                float D_match=Distances_[match.template_id];
+//                int dist_index=D_match/10;//10 distance step
+//                dist_accumulator[dist_index]++;
+
+//                if(map_dist_match.find (dist_index)==map_dist_match.end ())
+//                {
+//                    std::vector<linemod::Match> temp;
+//                    temp.push_back (match);
+//                    map_dist_match.insert(pair<unsigned int,std::vector<linemod::Match> >(dist_index,temp));
+//                }
+//                else
+//                {
+//                    map_dist_match[dist_index].push_back(match);
+//                }
+//            }
+
+//            for(int i=0;i<100;++i)
+//            {
+//                if(dist_accumulator[i]>max_vote_dist)
+//                {
+//                    max_vote_dist=dist_accumulator[i];
+//                    max_index_dist=i;
+//                }
+
+//            }
+
+//            //get matches according to the index
+//            std::vector<linemod::Match> distVote_result;
+//            distVote_result=map_dist_match[max_index_dist];
+
+//            //only withdraw the first match of the matches
+//            linemod::Match match=distVote_result[0];
+
+//------------------------------------------------------------------------------------//
              //deal with the candidates from the above linemod match
-             BOOST_FOREACH(const linemod::Match& match,matches){
                  pci_real_condition_filter_model->clear ();
                  //get the pose
                  cv::Matx33d R_match = Rs_[match.template_id].clone();// rotation of the object w.r.t to the view point
@@ -365,7 +461,7 @@ public:
                  //compute the intersection between template and real scene image
                  rect_ref = rect_ref & cv::Rect(0, 0, depth_real_ref_raw.cols, depth_real_ref_raw.rows);
                  if ((rect_ref.width < 5) || (rect_ref.height < 5))
-                   continue;
+                   return;
                  //adjust both rectangles to be equal to the smallest among them
                  if (rect_ref.width > rect_model.width)
                    rect_ref.width = rect_model.width;
@@ -384,16 +480,18 @@ public:
                  //initialize the translation based on reference data
                  cv::Vec3f T_crop = depth_real_ref(depth_real_ref.rows / 2.0f, depth_real_ref.cols / 2.0f);
                  T_ref=T_crop;
+
                //first filter step
                  //reject if the depth of the templates exceed the ref depth to a certain extent
-                 float center_depth_model=(depth_real_model(depth_real_model.rows/2,depth_real_model.cols/2))[2];
-                 float center_depth_ref=(depth_real_ref(depth_real_ref.rows / 2.0f, depth_real_ref.cols / 2.0f))[2];
-                 //float depth_th=(renderer_radius_step/1000)*;
-                 if(center_depth_ref>1.0)
-                     continue;
-                 float depth_th=center_depth_ref*0.2;
-                 if(fabs(center_depth_model-center_depth_ref)>depth_th)
-                     continue;
+//                 float center_depth_model=(depth_real_model(depth_real_model.rows/2,depth_real_model.cols/2))[2];
+//                 float center_depth_ref=(depth_real_ref(depth_real_ref.rows / 2.0f, depth_real_ref.cols / 2.0f))[2];
+//                 //float depth_th=(renderer_radius_step/1000)*;
+//                 if(center_depth_ref>1.0)
+//                     return;
+//                 float depth_th=center_depth_ref*0.2;
+//                 if(fabs(center_depth_model-center_depth_ref)>depth_th)
+//                     return;
+
 //              //second filter step
                  //using depth to filter scene points: only those points with depth within a range will survive
                     //calculate Z range
@@ -430,13 +528,13 @@ public:
                  //add the object's depth
                  T_crop(2) += D_match;
                  if (!cv::checkRange(T_crop))
-                   continue;
+                   return;
                  cv::Vec3f T_real_icp(T_crop);
 
                  //initialize the rotation based on model data
                  //R_match orientation of obj w.r.t view frame(camera frame)
                  if (!cv::checkRange(R_match))
-                   continue;
+                   return;
                  cv::Matx33f R_real_icp(R_match);
 
                  //get the point clouds (for both reference and model)
@@ -451,7 +549,7 @@ public:
                 //third filter step
                  //reject if the points of model are too less regard to scene points
                  if (px_ratio_missing > (1.0f-px_match_min_))
-                   continue;
+                   return;
 
                  //add the Translation vector according to the position of point cloud of interest(ref points)
 
@@ -472,59 +570,12 @@ public:
                  pci_real_condition_filter_model->publish ();
                  //transform the format
                  objs_.push_back(LinemodData(pts_real_ref_temp, pts_real_model_temp, match.class_id,match.template_id, match.similarity,cv::Point(match.x,match.y), 0.0, R_real_icp, T_real_icp));
-             }//FOREACH
-
-             //local non-maxima supression to find the best match at each position
-             int count_pass = 0;
-             std::vector <LinemodData>::iterator it_o = objs_.begin();
-
-             std::vector<std::vector<LinemodData> > pose_clusters;
-             std::vector<LinemodData> pose_average_results;
-             //pose clustering based on position
-             for(;it_o!=objs_.end();++it_o)
-             {
-                 for(int j=0;j<pose_clusters.size()&&(!it_o->check_done);++j)
-                 {
-                     float e_dist=sqrt((it_o->t[0]-pose_clusters[j][0].t[0])*(it_o->t[0]-pose_clusters[j][0].t[0])+
-                             (it_o->t[1]-pose_clusters[j][0].t[1])*(it_o->t[1]-pose_clusters[j][0].t[1])+
-                             (it_o->t[2]-pose_clusters[j][0].t[2])*(it_o->t[2]-pose_clusters[j][0].t[2]));
-                     if(e_dist<0.02)
-                     {
-                         it_o->check_done=true;
-                         pose_clusters[j].push_back(*it_o);
-                     }
-                 }
-                 if(!it_o->check_done)
-                 {
-                     pose_clusters.push_back (std::vector<LinemodData>(it_o,it_o+1));
-                     it_o->check_done=true;
-                 }
-             }
-
-
-             for(int i=0;i<pose_clusters.size();++i)
-             {
-                 cv::Vec3f mean_position(0.0,0.0,0.0);
-                 for(int j=0;j<pose_clusters[i].size();++j)
-                 {
-                     cv::add(pose_clusters[i][j].t,mean_position,mean_position);
-                 }
-                 mean_position[0]/=pose_clusters[i].size();
-                 mean_position[1]/=pose_clusters[i].size();
-                 mean_position[2]/=pose_clusters[i].size();
-                 //use the orientation of the first pose result of every cluster
-                 pose_average_results.push_back (pose_clusters[i][0]);
-                 pose_average_results[i].t=mean_position;
-
-             }
 
              //ICP refinement
-             for(int i=0;i<pose_average_results.size();++i)
-            {
-             LinemodData *o_match = &(pose_average_results[i]);
+             LinemodData *o_match = &(objs_[0]);
              pcl::PointCloud<pcl::PointXYZ>::Ptr ref_pc(new pcl::PointCloud<pcl::PointXYZ>);
              pcl::PointCloud<pcl::PointXYZ>::Ptr model_pc(new pcl::PointCloud<pcl::PointXYZ>);
-             cv::Vec3f T_vect;
+             //cv::Vec3f T_vect;
              Matx33f R_tmp;
              ref_pc->points.resize (o_match->pts_ref.size ());
              model_pc->points.resize(o_match->pts_model.size());
@@ -576,17 +627,6 @@ public:
                //update the icp dist
                o_match->icp_distance=icp_distance_;
 
-               //if the angle between Z axis and the plane exceed a threshold, reject
-//                   float radian_th=0.04;
-//                   float bias=fabs(o_match->r(2,2))-1.0;
-//                   if(fabs(bias)>radian_th)
-//                       continue;
-//               if(o_match->r(2,2)>0)
-//               {
-//                   o_match->r(0,2)=-o_match->r(0,2);
-//                   o_match->r(1,2)=-o_match->r(1,2);
-//                   o_match->r(2,2)=-o_match->r(2,2);
-//                }
              //add points to the clouds
              pci_real_icpin_model->fill(o_match->pts_model, cv::Vec3b(0,255,0));
              pci_real_icpin_ref->fill(o_match->pts_ref, cv::Vec3b(0,0,255));
@@ -594,112 +634,11 @@ public:
              pci_real_icpin_ref->publish();
 
              final_poses.push_back (*o_match);
-             ++count_pass;
+             std::cout<<"get final result"<<std::endl;
 
               }
-             }
-
-             //origin pose clustering
-            /* for (; it_o != objs_.end(); ++it_o)
-              {
-                 if (!it_o->check_done)
-               {
-                 //initialize the object to publish
-                 LinemodData *o_match = &(*it_o);
-                 //static_cast used as force convertion
-                 int size_th = static_cast<int>((float)o_match->pts_model.size()*0.85);
-                 std::vector <LinemodData>::iterator it_o2 = it_o;
-                 ++it_o2;
-                 //find the best object match among near objects
-                 for (; it_o2 != objs_.end(); ++it_o2)
-                   {
-                     if (!it_o2->check_done)
-                     if (cv::norm(o_match->t, it_o2->t) < th_obj_dist_)
-                     {
-                       it_o2->check_done = true;
-                       if ((it_o2->pts_model.size() > size_th) && (it_o2->match_sim > o_match->match_sim))
-                         o_match = &(*it_o2);
-                     }
-                   }
-
-                 //perform the final precise icp
-
-                 pcl::PointCloud<pcl::PointXYZ>::Ptr ref_pc(new pcl::PointCloud<pcl::PointXYZ>);
-                 pcl::PointCloud<pcl::PointXYZ>::Ptr model_pc(new pcl::PointCloud<pcl::PointXYZ>);
-                 cv::Vec3f T_vect;
-                 Matx33f R_tmp;
-                 ref_pc->points.resize (o_match->pts_ref.size ());
-                 model_pc->points.resize(o_match->pts_model.size());
-
-                 for(int i=0;i<o_match->pts_ref.size();++i)
-                 {
-                     ref_pc->points[i].x=o_match->pts_ref[i][0];
-                     ref_pc->points[i].y=o_match->pts_ref[i][1];
-                     ref_pc->points[i].z=o_match->pts_ref[i][2];
-                 }
-
-                 for(int i=0;i<o_match->pts_model.size();++i)
-                 {
-                     model_pc->points[i].x=o_match->pts_model[i][0];
-                     model_pc->points[i].y=o_match->pts_model[i][1];
-                     model_pc->points[i].z=o_match->pts_model[i][2];
-                 }
-
-                 //perform icp
-                 //std::vector<int> index;
-                 icp.setInputSource (model_pc);
-                 icp.setInputTarget (ref_pc);
-                 //pcl::removeNaNFromPointCloud(*ref_pc,*ref_pc,index);
-                 //pcl::removeNaNFromPointCloud(*model_pc,*model_pc,index);
-                 icp.align (*model_pc);
-                 float icp_distance_=(icp.getFitnessScore ())/(o_match->pts_model.size());
-
-                 if (icp.hasConverged ())
-                 {
-                   Eigen::Matrix4d transformation_matrix = icp.getFinalTransformation ().cast<double>();
-                   for(int i=0;i<3;++i)
-                   {
-                       for(int j=0;j<3;++j)
-                       {
-                           R_tmp(i,j)=transformation_matrix(i,j);
-                       }
-                   }
-                   T_vect[0]=transformation_matrix(0,3);
-                   T_vect[1]=transformation_matrix(1,3);
-                   T_vect[2]=transformation_matrix(2,3);
-
-                   //update the pointcloud
-                   transformPoints(o_match->pts_model, o_match->pts_model, R_tmp, T_vect);
-                   //update the translation vector
-                   o_match->t = R_tmp * o_match->t;
-                   cv::add(T_vect, o_match->t, o_match->t);
-                   //update the rotation matrix
-                   o_match->r = R_tmp * o_match->r;
-                   //update the icp dist
-                   o_match->icp_distance=icp_distance_;
-
-                   //if the angle between Z axis and the plane exceed a threshold, reject
-//                   float radian_th=0.04;
-//                   float bias=fabs(o_match->r(2,2))-1.0;
-//                   if(fabs(bias)>radian_th)
-//                       continue;
-                   if(o_match->r(2,2)>0)
-                   {
-                       o_match->r(0,2)=(-1)*o_match->r(0,2);
-                       o_match->r(1,2)=(-1)*o_match->r(1,2);
-                       o_match->r(2,2)=(-1)*o_match->r(2,2);
-                    }
-                 //add points to the clouds
-                 pci_real_icpin_model->fill(o_match->pts_model, cv::Vec3b(0,255,0));
-                 pci_real_icpin_ref->fill(o_match->pts_ref, cv::Vec3b(0,0,255));
-                 pci_real_icpin_model->publish();
-                 pci_real_icpin_ref->publish();
-
-                 final_poses.push_back (*o_match);
-                 ++count_pass;
-                }
-              }//non-maximum supression finished
-             }*/
+             else
+                 return;
 
 
              // broadcast TFs
@@ -715,9 +654,6 @@ public:
                  orientation3x3_tf.setValue (orientation(0,0),orientation(0,1),orientation(0,2),
                                           orientation(1,0),orientation(1,1),orientation(1,2),
                                           orientation(2,0),orientation(2,1),orientation(2,2));
-//                 orientation3x3_tf.setValue (orientation(0,0),orientation(1,0),orientation(2,0),
-//                                           orientation(0,1),orientation(1,1),orientation(2,1),
-//                                           orientation(0,2),orientation(1,2),orientation(2,2));
                  tf::Quaternion orientationQua_tf;
                  orientation3x3_tf.getRotation (orientationQua_tf);
                  transform.setRotation (orientationQua_tf);
@@ -725,7 +661,7 @@ public:
 
              }
 
-             std::cout << "rough matches:" << matches.size()<<" / "<<"condition filter matches: "<<objs_.size() << " / " <<"clustering matches:"<< count_pass<<std::endl;
+             std::cout << "rough matches:" << matches.size()<<std::endl;
              objs_.clear ();
              final_poses.clear ();
              //publish the point clouds
@@ -869,10 +805,10 @@ int main(int argc,char** argv)
     float icp_fitness_th;
     if(argc<8)
     {
-        linemod_template_path="/home/tom/baxter_ws/src/birl_baxter/birl_vision/linemod/linemod_pose_estimation/config/data/SIAT_box_male_sw_linemod_templates_750mm.yml";
-        renderer_param_path="/home/tom/baxter_ws/src/birl_baxter/birl_vision/linemod/linemod_pose_estimation/config/data/SIAT_box_male_sw_linemod_renderer_params_750mm.yml";
-        model_stl_path="/home/tom/baxter_ws/src/birl_baxter/birl_vision/linemod/linemod_pose_estimation/config/stl/box_male_sw_geometry_origin.stl";
-        detect_score_th=94.0;
+        linemod_template_path="/home/tom/catkin_ws/src/linemod_pose_estimation/config/data/coke_linemod_templates.yml";
+        renderer_param_path="/home/tom/catkin_ws/src/linemod_pose_estimation/config/data/coke_linemod_renderer_params.yml";
+        model_stl_path="/home/tom/catkin_ws/src/linemod_pose_estimation/config/stl/coke.stl";
+        detect_score_th=92.0;
         clustering_th=0.02;
         icp_max_iter=25;
         icp_tr_epsilon=0.0001;

@@ -264,7 +264,7 @@ public:
              cvtColor (mat_rgb,mat_gray,CV_BGR2GRAY);
 
              cv::Mat mask=cv::Mat::zeros (480,640,CV_8UC1);
-             cv::Rect roi_rect=cv::Rect(0,55,635,239);
+             cv::Rect roi_rect=cv::Rect(125,0,391,326);//baxter table 0,55,635,239
              mask(roi_rect)=255;
              std::vector<cv::Mat> masks;
              masks.push_back (mask);
@@ -830,9 +830,9 @@ int main(int argc,char** argv)
     float icp_fitness_th;
     if(argc<8)
     {
-        linemod_template_path="/home/tom/baxter_ws/src/birl_baxter/birl_vision/linemod/linemod_pose_estimation/config/data/SIAT_box_male_sw_linemod_templates_750mm.yml";
-        renderer_param_path="/home/tom/baxter_ws/src/birl_baxter/birl_vision/linemod/linemod_pose_estimation/config/data/SIAT_box_male_sw_linemod_renderer_params_750mm.yml";
-        model_stl_path="/home/tom/baxter_ws/src/birl_baxter/birl_vision/linemod/linemod_pose_estimation/config/stl/box_male_sw_geometry_origin.stl";
+        linemod_template_path="/home/tom/catkin_ws/src/linemod_pose_estimation/config/data/SIAT_box_male_sw_linemod_templates_750mm.yml";
+        renderer_param_path="/home/tom/catkin_ws/src/linemod_pose_estimation/config/data/SIAT_box_male_sw_linemod_renderer_params_750mm.yml";
+        model_stl_path="/home/tom/catkin_ws/src/linemod_pose_estimation/config/stl/box_male_sw_geometry_origin.stl";
         detect_score_th=94.0;
         clustering_th=0.02;
         icp_max_iter=25;
