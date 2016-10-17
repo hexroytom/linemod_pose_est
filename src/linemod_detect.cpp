@@ -8,7 +8,7 @@
 #include <tf/transform_broadcaster.h>
 
 //#include <cv_bridge/cv_bridge.h>
-#include <cv_bridge3/cv_bridge/cv_bridge.h>
+#include <cv_bridge/cv_bridge.h>
 #include <image_transport/image_transport.h>
 #include <message_filters/synchronizer.h>
 #include <message_filters/subscriber.h>
@@ -24,9 +24,9 @@
 
 //opencv
 #include <opencv2/core/core.hpp>
-#include <opencv2/rgbd.hpp>
-#include <opencv2/highgui.hpp>
-#include <opencv2/imgproc.hpp>
+#include <opencv2/highgui/highgui.hpp>
+#include <opencv2/imgproc/imgproc.hpp>
+#include <opencv2/rgbd/rgbd.hpp>
 
 //PCL
 #include <pcl/point_types.h>
@@ -262,18 +262,22 @@ public:
 
              cv::Mat mat_gray;
              cvtColor (mat_rgb,mat_gray,CV_BGR2GRAY);
-
-             cv::Mat Mask=cv::Mat::zeros (480,640,CV_8UC1);
-             cv::Rect roi_rect=cv::Rect(125,0,391,326);//baxter table 0,55,635,239
-             Mask(roi_rect)=255;
-             std::vector<cv::Mat> masks;
-             masks.push_back (Mask);
-             masks.push_back (Mask);
+            //set ROI
+//             cv::Mat Mask=cv::Mat::zeros (480,640,CV_8UC1);
+//             cv::Rect roi_rect=cv::Rect(125,0,391,326);//baxter table 0,55,635,239
+//             Mask(roi_rect)=255;
+//             std::vector<cv::Mat> masks;
+//             masks.push_back (Mask);
+//             masks.push_back (Mask);
              //perform the detection
              sources.push_back (mat_rgb);
              sources.push_back (mat_depth);
              std::vector<linemod::Match> matches;
-             detector->match (sources,threshold,matches,std::vector<String>(),noArray(),masks);
+             double t;
+             t=cv::getTickCount ();
+             detector->match (sources,threshold,matches,std::vector<String>(),noArray());
+             t=(cv::getTickCount ()-t)/cv::getTickFrequency ();
+             cout<<"Time consumed by template matching: "<<t<<" s"<<endl;
 
 //             for(std::vector<linemod::Match>::iterator it=matches.begin();it!=matches.end();++it)
 //             {
@@ -287,7 +291,8 @@ public:
 
              //convert the depth image to 3d pointcloud
              cv::Mat_<cv::Vec3f> depth_real_ref_raw;
-             cv::rgbd::depthTo3d(mat_depth, K_depth, depth_real_ref_raw);
+             cv::depthTo3d(mat_depth, K_depth, depth_real_ref_raw);
+
 
              pci_real_icpin_model->clear();
              pci_real_icpin_ref->clear();
@@ -347,6 +352,7 @@ public:
              //only withdraw the first match of the matches
              linemod::Match match=match_result[0];
 
+             //viz the detected result using only the 1st match in the bin
              Mat display=mat_rgb;
              std::vector<cv::linemod::Template> templates=detector->getTemplates(match.class_id, match.template_id);
              drawResponse(templates, 2, display,cv::Point(match.x,match.y), detector->getT(0));
@@ -448,7 +454,7 @@ public:
                  renderer_iterator_->renderDepthOnly(depth_ref_, mask, rect, -T_match, up);//up?
 
                  cv::Mat_<cv::Vec3f> depth_real_model_raw;
-                 cv::rgbd::depthTo3d(depth_ref_, K_matrix, depth_real_model_raw);//unit mm to m
+                 cv::depthTo3d(depth_ref_, K_matrix, depth_real_model_raw);//unit mm to m
 
                  //prepare the bounding box for the model and reference point clouds
                  cv::Rect_<int> rect_model(0, 0, depth_real_model_raw.cols, depth_real_model_raw.rows);
@@ -492,38 +498,38 @@ public:
 //                 if(fabs(center_depth_model-center_depth_ref)>depth_th)
 //                     return;
 
-//              //second filter step
+              //second filter step
                  //using depth to filter scene points: only those points with depth within a range will survive
                     //calculate Z range
-                 float Z_th=T_crop(2);
-                 cv::Mat_<cv::Vec3f>::iterator it_real_model=depth_real_model.begin ();
-                 float Z_min=10000;
-                 float Z_max=0.0;
-                 float Z_range=0.0;
-                 for(;it_real_model!=depth_real_model.end ();++it_real_model)
-                 {
-                     if(!cv::checkRange (*it_real_model))
-                         continue;
-                     //cv::Vec3f tmp=*it_real_model;
-                     if((*it_real_model)[2]<Z_min)
-                         Z_min=(*it_real_model)[2];
-                     if((*it_real_model)[2]>Z_max)
-                        Z_max=(*it_real_model)[2];
-                 }
-                 Z_range=Z_max-Z_min;
-                    //start filtering
-                 cv::Mat_<cv::Vec3f>::iterator it_real_ref= depth_real_ref.begin ();
-                 cv::Mat_<cv::Vec3f> depth_real_ref_filter;
-                 for(;it_real_ref!=depth_real_ref.end ();++it_real_ref)
-                 {
-                     cv::Vec3f ref_tmp=*it_real_ref;
-                     if(cv::checkRange (ref_tmp))
-                     {
-                         if(fabs(ref_tmp[2]-Z_th)<Z_range)
-                             depth_real_ref_filter.push_back(ref_tmp);
-                     }
+//                 float Z_th=T_crop(2);
+//                 cv::Mat_<cv::Vec3f>::iterator it_real_model=depth_real_model.begin ();
+//                 float Z_min=10000;
+//                 float Z_max=0.0;
+//                 float Z_range=0.0;
+//                 for(;it_real_model!=depth_real_model.end ();++it_real_model)
+//                 {
+//                     if(!cv::checkRange (*it_real_model))
+//                         continue;
+//                     //cv::Vec3f tmp=*it_real_model;
+//                     if((*it_real_model)[2]<Z_min)
+//                         Z_min=(*it_real_model)[2];
+//                     if((*it_real_model)[2]>Z_max)
+//                        Z_max=(*it_real_model)[2];
+//                 }
+//                 Z_range=Z_max-Z_min;
+//                    //start filtering
+//                 cv::Mat_<cv::Vec3f>::iterator it_real_ref= depth_real_ref.begin ();
+//                 cv::Mat_<cv::Vec3f> depth_real_ref_filter;
+//                 for(;it_real_ref!=depth_real_ref.end ();++it_real_ref)
+//                 {
+//                     cv::Vec3f ref_tmp=*it_real_ref;
+//                     if(cv::checkRange (ref_tmp))
+//                     {
+//                         if(fabs(ref_tmp[2]-Z_th)<Z_range)
+//                             depth_real_ref_filter.push_back(ref_tmp);
+//                     }
 
-                 }
+//                 }
 
                  //add the object's depth
                  T_crop(2) += D_match;
@@ -540,7 +546,7 @@ public:
                  //get the point clouds (for both reference and model)
                  std::vector<cv::Vec3f> pts_real_model_temp;
                  std::vector<cv::Vec3f> pts_real_ref_temp;
-                 float px_ratio_missing = matToVec(depth_real_ref_filter, depth_real_model, pts_real_ref_temp, pts_real_model_temp);
+                 float px_ratio_missing = matToVec(depth_real_ref, depth_real_model, pts_real_ref_temp, pts_real_model_temp);
 
                  //before using ICP
 //                 pci_real_nonICP_model->fill (pts_real_model_temp,cv::Vec3b(255,0,0));
@@ -670,7 +676,9 @@ public:
 
         static cv::Ptr<cv::linemod::Detector> readLinemod(const std::string& filename)
         {
-          cv::Ptr<cv::linemod::Detector> detector = cv::makePtr<cv::linemod::Detector>();
+
+          //cv::Ptr<cv::linemod::Detector> detector = cv::makePtr<cv::linemod::Detector>();
+          cv::Ptr<cv::linemod::Detector> detector(new cv::linemod::Detector);
           cv::FileStorage fs(filename, cv::FileStorage::READ);
           detector->read(fs.root());
 
@@ -805,9 +813,9 @@ int main(int argc,char** argv)
     float icp_fitness_th;
     if(argc<8)
     {
-        linemod_template_path="/home/tom/catkin_ws/src/linemod_pose_estimation/config/data/coke_linemod_templates.yml";
-        renderer_param_path="/home/tom/catkin_ws/src/linemod_pose_estimation/config/data/coke_linemod_renderer_params.yml";
-        model_stl_path="/home/tom/catkin_ws/src/linemod_pose_estimation/config/stl/coke.stl";
+        linemod_template_path="/home/yake/catkin_ws/src/linemod_pose_est/config/data/coke_linemod_templates.yml";
+        renderer_param_path="/home/yake/catkin_ws/src/linemod_pose_est/config/data/coke_linemod_renderer_params.yml";
+        model_stl_path="/home/yake/catkin_ws/src/linemod_pose_est/config/stl/coke.stl";
         detect_score_th=92.0;
         clustering_th=0.02;
         icp_max_iter=25;

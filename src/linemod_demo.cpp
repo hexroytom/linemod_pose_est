@@ -8,7 +8,7 @@
 #include <tf/transform_broadcaster.h>
 
 //#include <cv_bridge/cv_bridge.h>
-#include <cv_bridge3/cv_bridge/cv_bridge.h>
+#include <cv_bridge/cv_bridge.h>
 #include <image_transport/image_transport.h>
 #include <message_filters/synchronizer.h>
 #include <message_filters/subscriber.h>

@@ -5,7 +5,7 @@ project(linemod_pose_estimation)
 ## if COMPONENTS list like find_package(catkin REQUIRED COMPONENTS xyz)
 ## is used, also find other catkin packages
 find_package(catkin REQUIRED COMPONENTS
-  cv_bridge3
+  cv_bridge
   image_transport
   object_recognition_linemod
   object_recognition_renderer
@@ -16,10 +16,11 @@ find_package(catkin REQUIRED COMPONENTS
   std_msgs
 )
 # Use OpenCV 3.1.0.
-find_package (OpenCV 3.1.0 REQUIRED)
+find_package (OpenCV REQUIRED)
+
 # Set include dirs
-SET(OpenCV_INCLUDE_DIRS /opt/ros/indigo/include/opencv-3.1.0-dev)
-SET(default_INCLUDE_DIRS ../linemod_pose_estimation/include/linemod_pose_estimation)
+
+SET(default_INCLUDE_DIRS include/linemod_pose_estimation)
 
 ## System dependencies are found with CMake's conventions
 # find_package(Boost REQUIRED COMPONENTS system)
@@ -123,8 +124,9 @@ catkin_package(
 
 ## Specify additional locations of header files
 ## Your package locations should be listed before other locations
-#include_directories(include)
+
 include_directories(
+  include
   ${catkin_INCLUDE_DIRS}
   ${OpenCV_INCLUDE_DIRS}
   ${default_INCLUDE_DIRS}
@@ -143,9 +145,9 @@ include_directories(
 ## Declare a C++ executable
 # add_executable(linemod_pose_estimation_node src/linemod_pose_estimation_node.cpp)
 add_executable(linemod_renderer_node src/test_renderer.cpp)
-add_executable(linemod_detect_node src/linemod_detect.cpp src/linemod_icp.cpp src/linemod_pointcloud.cpp src/db_linemod.cpp)
-add_executable(linemod_detect_modified_node src/linemod_detect_modified.cpp src/linemod_icp.cpp src/linemod_pointcloud.cpp src/db_linemod.cpp)
-add_executable(linemod_demo_node src/linemod_demo.cpp src/linemod_icp.cpp src/linemod_pointcloud.cpp src/db_linemod.cpp)
+add_executable(linemod_detect_node src/linemod_detect.cpp src/linemod_icp.cpp src/linemod_pointcloud.cpp)# src/db_linemod.cpp)
+#add_executable(linemod_detect_modified_node src/linemod_detect_modified.cpp src/linemod_icp.cpp src/linemod_pointcloud.cpp src/db_linemod.cpp)
+#add_executable(linemod_demo_node src/linemod_demo.cpp src/linemod_icp.cpp src/linemod_pointcloud.cpp src/db_linemod.cpp)
 ## Add cmake target dependencies of the executable
 ## same as for the library above
 # add_dependencies(linemod_pose_estimation_node ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
@@ -164,20 +166,19 @@ target_link_libraries(linemod_renderer_node
 target_link_libraries(linemod_detect_node
   ${catkin_LIBRARIES}
   ${OpenCV_LIBRARIES}
-  libcv_bridge3.so
 )
 
-target_link_libraries(linemod_detect_modified_node
-  ${catkin_LIBRARIES}
-  ${OpenCV_LIBRARIES}
-  libcv_bridge3.so
-)
+#target_link_libraries(linemod_detect_modified_node
+#  ${catkin_LIBRARIES}
+#  ${OpenCV_LIBRARIES}
+#  libcv_bridge3.so
+#)
 
-target_link_libraries(linemod_demo_node
-  ${catkin_LIBRARIES}
-  ${OpenCV_LIBRARIES}
-  libcv_bridge3.so
-)
+#target_link_libraries(linemod_demo_node
+#  ${catkin_LIBRARIES}
+#  ${OpenCV_LIBRARIES}
+#  libcv_bridge3.so
+#)
 
 
 

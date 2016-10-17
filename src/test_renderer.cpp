@@ -4,12 +4,13 @@
 #include <sensor_msgs/PointCloud2.h>
 #include <sensor_msgs/CameraInfo.h>
 //#include <cv_bridge/cv_bridge.h>
-#include <cv_bridge3/cv_bridge/cv_bridge.h>
+#include <cv_bridge/cv_bridge.h>
 #include <image_transport/image_transport.h>
 //opencv
 #include <opencv2/core/core.hpp>
-#include <opencv2/rgbd.hpp>
-#include <opencv2/highgui.hpp>
+#include <opencv2/rgbd/rgbd.hpp>
+#include <opencv2/highgui/highgui.hpp>
+#include <opencv2/objdetect/objdetect.hpp>
 
 #include <object_recognition_renderer/renderer3d.h>
 #include <object_recognition_renderer/utils.h>
@@ -17,7 +18,8 @@
 // Functions to store detector and templates in single XML/YAML file
 static cv::Ptr<cv::linemod::Detector> readLinemod(const std::string& filename)
 {
-  cv::Ptr<cv::linemod::Detector> detector = cv::makePtr<cv::linemod::Detector>();
+  //cv::Ptr<cv::linemod::Detector> detector = cv::makePtr<cv::linemod::Detector>();
+  cv::Ptr<cv::linemod::Detector> detector(new cv::linemod::Detector);
   cv::FileStorage fs(filename, cv::FileStorage::READ);
   detector->read(fs.root());
 
