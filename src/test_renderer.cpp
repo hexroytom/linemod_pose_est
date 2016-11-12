@@ -11,6 +11,7 @@
 #include <opencv2/rgbd/rgbd.hpp>
 #include <opencv2/highgui/highgui.hpp>
 #include <opencv2/objdetect/objdetect.hpp>
+#include <opencv2/opencv.hpp>
 
 #include <object_recognition_renderer/renderer3d.h>
 #include <object_recognition_renderer/utils.h>
@@ -99,21 +100,63 @@ static void writeLinemodTemplateParams(std::string fileName,
 
 int main(int argc,char** argv)
 {
-    cv::Ptr<cv::linemod::Detector> detector_ = cv::linemod::getDefaultLINEMOD();
-    int renderer_n_points_ = 150;
-    int renderer_angle_step_ = 10;
-    double renderer_radius_min_ = 0.6;
-    double renderer_radius_max_ = 1.1;
-    double renderer_radius_step_ = 0.4;
-    int renderer_width_ = 640;
-    int renderer_height_ = 480;
-    double renderer_near_ = 0.1;
-    double renderer_far_ = 750.0;
-    double renderer_focal_length_x_ = atof(argv[1]);//Kinect ;//xtion 570.342;
-    double renderer_focal_length_y_ = atof(argv[2]);//Kinect //xtion 570.342;
-    std::string stl_file=argv[3];
-    std::string template_output_path=argv[4];
-    std::string renderer_params_output_path=argv[5];
+    std::vector< cv::Ptr<cv::linemod::Modality> > modalities;
+    //cv::Ptr<cv::linemod::ColorGradient> color_grad(new cv::linemod::ColorGradient);
+    //cv::Ptr<cv::linemod::DepthNormal> depth_grad(new cv::linemod::DepthNormal);
+    modalities.push_back(cv::Ptr<cv::linemod::ColorGradient>(new cv::linemod::ColorGradient));
+    modalities.push_back(cv::Ptr<cv::linemod::DepthNormal>(new cv::linemod::DepthNormal));
+    std::vector<int> ensenso_T;
+    ensenso_T.push_back(10);
+    ensenso_T.push_back(8);
+    cv::Ptr<cv::linemod::Detector> detector_(new cv::linemod::Detector(modalities,ensenso_T));
+
+    int renderer_n_points_;
+    int renderer_angle_step_;
+    double renderer_radius_min_;
+    double renderer_radius_max_;
+    double renderer_radius_step_;
+    int renderer_width_;
+    int renderer_height_;
+    double renderer_near_;
+    double renderer_far_ ;
+    double renderer_focal_length_x_;//Kinect ;//xtion 570.342;
+    double renderer_focal_length_y_;//Kinect //xtion 570.342;
+    std::string stl_file;
+    std::string template_output_path;
+    std::string renderer_params_output_path;
+
+    if(argc<8)
+        {
+        renderer_n_points_ = 150;
+        renderer_angle_step_ = 10;
+        renderer_radius_min_ = 0.4;
+        renderer_radius_max_ = 1.0;
+        renderer_radius_step_ = 0.2;
+        renderer_width_ = 640;
+        renderer_height_ = 480;
+        renderer_near_ = 0.1;
+        renderer_far_ = 1000.0;
+        renderer_focal_length_x_ = 804.6233;//Kinect ;//xtion 570.342;
+        renderer_focal_length_y_ = 804.6233;//Kinect //xtion 570.342;
+        stl_file="/home/yake/catkin_ws/src/linemod_pose_est/config/stl/coke.stl";
+        template_output_path="/home/yake/catkin_ws/src/linemod_pose_est/config/data/coke_linemod_ensenso_templates.yml";
+        renderer_params_output_path="/home/yake/catkin_ws/src/linemod_pose_est/config/data/coke_linemod_ensenso_renderer_params.yml";
+    }else{
+     renderer_n_points_ = 150;
+     renderer_angle_step_ = 10;
+     renderer_radius_min_ = 0.4;
+     renderer_radius_max_ = 0.8;
+     renderer_radius_step_ = 0.2;
+     renderer_width_ = atoi(argv[3]);
+     renderer_height_ = atoi(argv[4]);
+     renderer_near_ = 0.1;
+     renderer_far_ = 1000.0;
+     renderer_focal_length_x_ = atof(argv[1]);//Kinect ;//xtion 570.342;
+     renderer_focal_length_y_ = atof(argv[2]);//Kinect //xtion 570.342;
+     stl_file=argv[5];
+     template_output_path=argv[6];
+     renderer_params_output_path=argv[7];
+    }
 
     Renderer3d render=Renderer3d(stl_file);
     render.set_parameters (renderer_width_, renderer_height_, renderer_focal_length_x_,

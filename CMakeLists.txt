@@ -14,6 +14,7 @@ find_package(catkin REQUIRED COMPONENTS
   roscpp
   sensor_msgs
   std_msgs
+  ensenso
 )
 # Use OpenCV 3.1.0.
 find_package (OpenCV REQUIRED)
@@ -145,7 +146,9 @@ include_directories(
 ## Declare a C++ executable
 # add_executable(linemod_pose_estimation_node src/linemod_pose_estimation_node.cpp)
 add_executable(linemod_renderer_node src/test_renderer.cpp)
+add_executable(linemod_image_renderer_node src/renderer_only_image.cpp)
 add_executable(linemod_detect_node src/linemod_detect.cpp src/linemod_icp.cpp src/linemod_pointcloud.cpp)# src/db_linemod.cpp)
+add_executable(linemod_ensenso_detect_node src/linemod_ensenso_detect.cpp src/linemod_icp.cpp src/linemod_pointcloud.cpp)
 #add_executable(linemod_detect_modified_node src/linemod_detect_modified.cpp src/linemod_icp.cpp src/linemod_pointcloud.cpp src/db_linemod.cpp)
 #add_executable(linemod_demo_node src/linemod_demo.cpp src/linemod_icp.cpp src/linemod_pointcloud.cpp src/db_linemod.cpp)
 ## Add cmake target dependencies of the executable
@@ -163,7 +166,18 @@ target_link_libraries(linemod_renderer_node
   ${object_recognition_renderer_LIBRARIES}
 )
 
+target_link_libraries(linemod_image_renderer_node
+  ${catkin_LIBRARIES}
+  ${OpenCV_LIBRARIES}
+  ${object_recognition_renderer_LIBRARIES}
+)
+
 target_link_libraries(linemod_detect_node
+  ${catkin_LIBRARIES}
+  ${OpenCV_LIBRARIES}
+)
+
+target_link_libraries(linemod_ensenso_detect_node
   ${catkin_LIBRARIES}
   ${OpenCV_LIBRARIES}
 )

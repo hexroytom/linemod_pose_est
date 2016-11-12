@@ -249,6 +249,10 @@ public:
              {
                 img_ptr_depth->image.convertTo (mat_depth,CV_16UC1,1000.0);
              }
+             else
+             {
+                 img_ptr_depth->image.copyTo(mat_depth);
+             }
 
              //std::cout<<"depth "<<img_ptr_depth->image.at<short>(240,320)<<std::endl;
              cv::Mat mat_rgb;
@@ -277,17 +281,19 @@ public:
              t=cv::getTickCount ();
              detector->match (sources,threshold,matches,std::vector<String>(),noArray());
              t=(cv::getTickCount ()-t)/cv::getTickFrequency ();
-             cout<<"Time consumed by template matching: "<<t<<" s"<<endl;
+//             cout<<"Time consumed by template matching: "<<t<<" s"<<endl;
+//            cout<<"LINEMOD Matching Result: "<< matches.size()<<endl;
 
-//             for(std::vector<linemod::Match>::iterator it=matches.begin();it!=matches.end();++it)
-//             {
-
-//                 Mat display=mat_rgb;
-//                 std::vector<cv::linemod::Template> templates=detector->getTemplates(it->class_id, it->template_id);
-//                 drawResponse(templates, 2, display,cv::Point(it->x,it->y), detector->getT(0));
-//                 imshow("display",display);
-//                 cv::waitKey (1);
+//----------------------Distance inconsisitency filter------------------------------//
+//             double average_distance=0.0;
+//             BOOST_FOREACH(const linemod::Match& match,matches){
+//                 float template_distance=(Obj_origin_dists[match.template_id]-Distances_[match.template_id])*1000;
+//                 double scene_distance=mat_depth.at<ushort>(match.y,match.x);
+//                 double depth_inconsist=abs(template_distance-scene_distance);
+//                 average_distance+=depth_inconsist;
 //             }
+//             average_distance=average_distance/matches.size();
+//             cout<<average_distance<<endl;
 
              //convert the depth image to 3d pointcloud
              cv::Mat_<cv::Vec3f> depth_real_ref_raw;
@@ -341,7 +347,7 @@ public:
              }
 
              //if too few votes,reject
-             if(max_vote<2)
+             if(max_vote<5)
                  return;
 
 
@@ -354,8 +360,15 @@ public:
 
              //viz the detected result using only the 1st match in the bin
              Mat display=mat_rgb;
-             std::vector<cv::linemod::Template> templates=detector->getTemplates(match.class_id, match.template_id);
-             drawResponse(templates, 2, display,cv::Point(match.x,match.y), detector->getT(0));
+//             std::vector<cv::linemod::Template> templates=detector->getTemplates(match.class_id, match.template_id);
+//             drawResponse(templates, 1, display,cv::Point(match.x,match.y), 2);
+//             imshow("display",display);
+//             cv::waitKey (1);
+
+             for(std::vector<linemod::Match>::iterator it= matches.begin();it != matches.end();it++){
+                 std::vector<cv::linemod::Template> templates=detector->getTemplates(it->class_id, it->template_id);
+                 drawResponse(templates, 1, display,cv::Point(match.x,match.y), 2);
+             }
              imshow("display",display);
              cv::waitKey (1);
 
@@ -492,8 +505,6 @@ public:
 //                 float center_depth_model=(depth_real_model(depth_real_model.rows/2,depth_real_model.cols/2))[2];
 //                 float center_depth_ref=(depth_real_ref(depth_real_ref.rows / 2.0f, depth_real_ref.cols / 2.0f))[2];
 //                 //float depth_th=(renderer_radius_step/1000)*;
-//                 if(center_depth_ref>1.0)
-//                     return;
 //                 float depth_th=center_depth_ref*0.2;
 //                 if(fabs(center_depth_model-center_depth_ref)>depth_th)
 //                     return;
@@ -640,7 +651,7 @@ public:
              pci_real_icpin_ref->publish();
 
              final_poses.push_back (*o_match);
-             std::cout<<"get final result"<<std::endl;
+             //std::cout<<"get final result"<<std::endl;
 
               }
              else
@@ -667,7 +678,7 @@ public:
 
              }
 
-             std::cout << "rough matches:" << matches.size()<<std::endl;
+             //std::cout << "rough matches:" << matches.size()<<std::endl;
              objs_.clear ();
              final_poses.clear ();
              //publish the point clouds
@@ -697,7 +708,7 @@ public:
           if (dst.channels() == 1)
             cv::cvtColor(dst, dst, cv::COLOR_GRAY2BGR);
 
-          cv::circle(dst, cv::Point(offset.x + 20, offset.y + 20), T / 2, COLORS[4]);
+          //cv::circle(dst, cv::Point(offset.x + 20, offset.y + 20), T / 2, COLORS[4]);
           if (num_modalities > 5)
             num_modalities = 5;
           for (int m = 0; m < num_modalities; ++m)
@@ -705,7 +716,7 @@ public:
         // NOTE: Original demo recalculated max response for each feature in the TxT
         // box around it and chose the display color based on that response. Here
         // the display color just depends on the modality.
-            cv::Scalar color = COLORS[m];
+            cv::Scalar color = COLORS[m+2];
 
             for (int i = 0; i < (int) templates[m].features.size(); ++i)
             {
@@ -816,7 +827,7 @@ int main(int argc,char** argv)
         linemod_template_path="/home/yake/catkin_ws/src/linemod_pose_est/config/data/coke_linemod_templates.yml";
         renderer_param_path="/home/yake/catkin_ws/src/linemod_pose_est/config/data/coke_linemod_renderer_params.yml";
         model_stl_path="/home/yake/catkin_ws/src/linemod_pose_est/config/stl/coke.stl";
-        detect_score_th=92.0;
+        detect_score_th=90.0;
         clustering_th=0.02;
         icp_max_iter=25;
         icp_tr_epsilon=0.0001;
