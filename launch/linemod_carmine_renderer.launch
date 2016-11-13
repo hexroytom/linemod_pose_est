@@ -1,0 +1,25 @@
+<launch>
+  <arg name="camera_focal_length_x" default="535.566011" />
+  <arg name="camera_focal_length_y" default="537.168115" />
+  <arg name="image_width" default="640" />
+  <arg name="image_height" default="480" />
+  <arg name="model_STL_file_path" default="$(find linemod_pose_estimation)/config/stl/coke.stl" />
+  <arg name="linemod_template_output_path" default="$(find linemod_pose_estimation)/config/data/coke_linemod_templates.yml" />
+  <arg name="linemod_renderer_params_output_path" default="$(find linemod_pose_estimation)/config/data/coke_linemod_renderer_params.yml" />
+  <arg name="radius_min" default="0.4" />
+  <arg name="radius_max" default="0.8" />
+  <arg name="radius_step" default="0.1" />
+
+  <node name="linemod_renderer_node" pkg="linemod_pose_estimation" type="linemod_renderer_node" output="screen" respawn="false" args="$(arg camera_focal_length_x) 
+                      $(arg camera_focal_length_y) 
+ 		      $(arg image_width)
+		      $(arg image_height)
+                      $(arg model_STL_file_path) 
+                      $(arg linemod_template_output_path) 
+                      $(arg linemod_renderer_params_output_path)
+		      $(arg radius_min)
+		      $(arg radius_max)
+                      $(arg radius_step)"
+  />
+
+</launch>

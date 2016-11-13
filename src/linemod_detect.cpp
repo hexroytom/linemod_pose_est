@@ -149,6 +149,8 @@ public:
     std::vector<LinemodData> final_poses;//pose result after clustering process
 
     tf::TransformBroadcaster tf_broadcaster;
+
+    int vote_thresh;
 public:
         linemod_detect(std::string template_file_name,std::string renderer_params_name,std::string mesh_path,float detect_score_threshold,float clustering_threshold,int icp_max_iter,float icp_tr_epsilon,float icp_fitness_threshold):
             it(nh),
@@ -157,7 +159,8 @@ public:
             depth_frame_id_("camera_rgb_optical_frame"),
             sync(SyncPolicy(1), sub_color, sub_depth),
             px_match_min_(0.25f),
-            icp_dist_min_(0.06f)
+            icp_dist_min_(0.06f),
+            vote_thresh(6)
         {
             //pub test
             //pub_color_=it.advertise ("/sync_rgb",2);
@@ -219,6 +222,7 @@ public:
                 return;
             }
 
+            //Convert ros msg to OpenCV mat
             cv_bridge::CvImagePtr img_ptr_rgb;
             cv_bridge::CvImagePtr img_ptr_depth;
             std::vector<Mat> sources;
@@ -239,11 +243,6 @@ public:
                  ROS_ERROR("cv_bridge exception:  %s", e.what());
                  return;
              }
-
-            //publish test
-            //pub_color_.publish (img_ptr_rgb->toImageMsg ());
-            //pub_depth.publish (img_ptr_depth->toImageMsg ());
-
              cv::Mat mat_depth;
              if(img_ptr_depth->image.depth ()==CV_32F)
              {
@@ -254,7 +253,6 @@ public:
                  img_ptr_depth->image.copyTo(mat_depth);
              }
 
-             //std::cout<<"depth "<<img_ptr_depth->image.at<short>(240,320)<<std::endl;
              cv::Mat mat_rgb;
              if(img_ptr_rgb->image.rows>960)
              {
@@ -273,7 +271,8 @@ public:
 //             std::vector<cv::Mat> masks;
 //             masks.push_back (Mask);
 //             masks.push_back (Mask);
-             //perform the detection
+
+             //Perform the LINEMOD detection
              sources.push_back (mat_rgb);
              sources.push_back (mat_depth);
              std::vector<linemod::Match> matches;
@@ -281,8 +280,24 @@ public:
              t=cv::getTickCount ();
              detector->match (sources,threshold,matches,std::vector<String>(),noArray());
              t=(cv::getTickCount ()-t)/cv::getTickFrequency ();
-//             cout<<"Time consumed by template matching: "<<t<<" s"<<endl;
-//            cout<<"LINEMOD Matching Result: "<< matches.size()<<endl;
+             cout<<"Time consumed by template matching: "<<t<<" s"<<endl;
+             cout<<"(1) LINEMOD Matching Result: "<< matches.size()<<endl;
+
+             //Viz all the detected result
+             Mat display=mat_rgb;
+             Mat display_remaind_match;
+             mat_rgb.copyTo(display_remaind_match);
+             for(std::vector<linemod::Match>::iterator it= matches.begin();it != matches.end();it++)
+             {
+                 std::vector<cv::linemod::Template> templates=detector->getTemplates(it->class_id, it->template_id);
+                 drawResponse(templates, 1, display,cv::Point(it->x,it->y), 2,2);
+             }
+             imshow("display",display);
+
+
+             //If no match is found, return
+             if(matches.size()==0)
+                 return;
 
 //----------------------Distance inconsisitency filter------------------------------//
 //             double average_distance=0.0;
@@ -307,20 +322,34 @@ public:
             // pci_real_1stICP_model->clear ();
 //----------------3D Voting-----------------------------------------------------//
 
-             unsigned int *accumulator =(unsigned int*)calloc (64*48*100,sizeof(unsigned int));
+             int position_voting_width=renderer_width; //640 or 752
+             int position_voting_height=renderer_height; //480
+             float position_voting_depth=renderer_radius_max-renderer_radius_min;
+
+             int voting_width_step=10; //Unit: pixel
+             int voting_height_step=10; //Unit: pixel, width step and height step suppose to be the same
+             float voting_depth_step=renderer_radius_step;//Unit: m
+
+             int voting_width_cells=(int)(position_voting_width/voting_width_step)+1;
+             int voting_height_cells=(int)(position_voting_height/voting_height_step)+1;
+             int voting_depth_cells=(int)(position_voting_depth/voting_depth_step)+1;
+
+             unsigned int *accumulator =(unsigned int*)calloc (voting_width_cells*voting_height_cells*voting_depth_cells,sizeof(unsigned int));
              std::map<unsigned int, std::vector<linemod::Match> > map_match;
              int max_index=0;
              int max_vote=0;
 
              BOOST_FOREACH(const linemod::Match& match,matches){
-                 //get the pose
-                 float D_match = Distances_[match.template_id];//the distance from the center of object surface to the camera origin
-
-                 int row_index=match.x/10;//10  step
-                 int col_index=match.y/10;
-                 int dist_index=D_match/10;//10 distance step
-                 int index=dist_index*64*48+row_index*64+col_index;
+                 //Get height(row), width(cols), depth index
+                 int height_index=match.y/voting_height_step;
+                 int width_index=match.x/voting_width_step;
+                 float depth = Obj_origin_dists[match.template_id];//the distance from the object origin to the camera origin
+                 int depth_index=(int)((depth-renderer_radius_min)/voting_depth_step);
+                 int index=depth_index*voting_width_cells*voting_height_cells+
+                           height_index*voting_width_cells+
+                           width_index;
                  accumulator[index]++;
+                 //Use MAP to store matches of the same index
                  if(map_match.find (index)==map_match.end ())
                  {
                      std::vector<linemod::Match> temp;
@@ -334,22 +363,52 @@ public:
 
              }
 
-             //looking for max vote
+             //Extract all cells with more than one vote
+             vector<vector<linemod::Match> > match_all_clusters;
              #pragma omp parallel for
-             for(int i=0;i<48*64*100;++i)
+             for(int index=0;index<voting_width_cells*voting_height_cells*voting_depth_cells;++index)
              {
-                 if(accumulator[i]>max_vote)
+                 if(accumulator[index]>1)
                  {
-                     max_vote=accumulator[i];
-                     max_index=i;
+                     match_all_clusters.push_back(map_match[index]);
                  }
 
              }
 
-             //if too few votes,reject
-             if(max_vote<5)
-                 return;
+             //Extract cells with more than [vote_thresh] vote
+             vector<vector<linemod::Match> > match_clusters;
+             for(vector<vector<linemod::Match> >::iterator it = match_all_clusters.begin();it != match_all_clusters.end();++it)
+             {
+                 if(it->size()>vote_thresh)
+                     match_clusters.push_back(*it);
+             }
 
+
+             //Viz the remain matches
+             for(vector<vector<linemod::Match> >::iterator it1 = match_clusters.begin();it1 != match_clusters.end();++it1)
+             {
+                 for(std::vector<linemod::Match>::iterator it2= it1->begin();it2 != it1->end();it2++)
+                 {
+                     std::vector<cv::linemod::Template> templates=detector->getTemplates(it2->class_id, it2->template_id);
+                     drawResponse(templates, 1, display_remaind_match,cv::Point(it2->x,it2->y), 2,4);
+                 }
+             }
+             imshow("display_remain",display_remaind_match);
+             cv::waitKey (1);
+
+             //Retrive Rotation matrix
+             vector<vector<Mat> > rotation_matrix_clusters;
+             for(vector<vector<linemod::Match> >::iterator it1 = match_clusters.begin();it1 != match_clusters.end();++it1)
+             {
+                 vector<Mat> tmp_matrix;
+                 for(std::vector<linemod::Match>::iterator it2= it1->begin();it2 != it1->end();it2++)
+                 {
+                    tmp_matrix.push_back(Rs_[it2->template_id]);
+                 }
+                 rotation_matrix_clusters.push_back(tmp_matrix);
+             }
+
+             return;
 
              //get matches according to the index
              std::vector<linemod::Match> match_result;
@@ -357,20 +416,6 @@ public:
 
              //only withdraw the first match of the matches
              linemod::Match match=match_result[0];
-
-             //viz the detected result using only the 1st match in the bin
-             Mat display=mat_rgb;
-//             std::vector<cv::linemod::Template> templates=detector->getTemplates(match.class_id, match.template_id);
-//             drawResponse(templates, 1, display,cv::Point(match.x,match.y), 2);
-//             imshow("display",display);
-//             cv::waitKey (1);
-
-             for(std::vector<linemod::Match>::iterator it= matches.begin();it != matches.end();it++){
-                 std::vector<cv::linemod::Template> templates=detector->getTemplates(it->class_id, it->template_id);
-                 drawResponse(templates, 1, display,cv::Point(match.x,match.y), 2);
-             }
-             imshow("display",display);
-             cv::waitKey (1);
 
 //-----------------------------------------------------------------------------//
 
@@ -701,7 +746,7 @@ public:
         }
 
         void drawResponse(const std::vector<cv::linemod::Template>& templates, int num_modalities, cv::Mat& dst, cv::Point offset,
-                     int T)
+                     int T,int color_select)
         {
           static const cv::Scalar COLORS[5] =
           { CV_RGB(0, 0, 255), CV_RGB(0, 255, 0), CV_RGB(255, 255, 0), CV_RGB(255, 140, 0), CV_RGB(255, 0, 0) };
@@ -716,7 +761,7 @@ public:
         // NOTE: Original demo recalculated max response for each feature in the TxT
         // box around it and chose the display color based on that response. Here
         // the display color just depends on the modality.
-            cv::Scalar color = COLORS[m+2];
+            cv::Scalar color = COLORS[m+color_select];
 
             for (int i = 0; i < (int) templates[m].features.size(); ++i)
             {
@@ -827,7 +872,7 @@ int main(int argc,char** argv)
         linemod_template_path="/home/yake/catkin_ws/src/linemod_pose_est/config/data/coke_linemod_templates.yml";
         renderer_param_path="/home/yake/catkin_ws/src/linemod_pose_est/config/data/coke_linemod_renderer_params.yml";
         model_stl_path="/home/yake/catkin_ws/src/linemod_pose_est/config/stl/coke.stl";
-        detect_score_th=90.0;
+        detect_score_th=91.0;
         clustering_th=0.02;
         icp_max_iter=25;
         icp_tr_epsilon=0.0001;

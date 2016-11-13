@@ -106,7 +106,7 @@ int main(int argc,char** argv)
     modalities.push_back(cv::Ptr<cv::linemod::ColorGradient>(new cv::linemod::ColorGradient));
     modalities.push_back(cv::Ptr<cv::linemod::DepthNormal>(new cv::linemod::DepthNormal));
     std::vector<int> ensenso_T;
-    ensenso_T.push_back(10);
+    ensenso_T.push_back(5);
     ensenso_T.push_back(8);
     cv::Ptr<cv::linemod::Detector> detector_(new cv::linemod::Detector(modalities,ensenso_T));
 
@@ -125,28 +125,28 @@ int main(int argc,char** argv)
     std::string template_output_path;
     std::string renderer_params_output_path;
 
-    if(argc<8)
+    if(argc<10)
         {
         renderer_n_points_ = 150;
         renderer_angle_step_ = 10;
         renderer_radius_min_ = 0.4;
-        renderer_radius_max_ = 1.0;
-        renderer_radius_step_ = 0.2;
+        renderer_radius_max_ = 0.8;
+        renderer_radius_step_ = 0.1;
         renderer_width_ = 640;
         renderer_height_ = 480;
         renderer_near_ = 0.1;
         renderer_far_ = 1000.0;
-        renderer_focal_length_x_ = 804.6233;//Kinect ;//xtion 570.342;
-        renderer_focal_length_y_ = 804.6233;//Kinect //xtion 570.342;
+        renderer_focal_length_x_ = 535.566011;//Kinect ;//xtion 570.342;
+        renderer_focal_length_y_ = 537.168115;//Kinect //xtion 570.342;
         stl_file="/home/yake/catkin_ws/src/linemod_pose_est/config/stl/coke.stl";
-        template_output_path="/home/yake/catkin_ws/src/linemod_pose_est/config/data/coke_linemod_ensenso_templates.yml";
-        renderer_params_output_path="/home/yake/catkin_ws/src/linemod_pose_est/config/data/coke_linemod_ensenso_renderer_params.yml";
+        template_output_path="/home/yake/catkin_ws/src/linemod_pose_est/config/data/coke_linemod_templates.yml";
+        renderer_params_output_path="/home/yake/catkin_ws/src/linemod_pose_est/config/data/coke_linemod_renderer_params.yml";
     }else{
      renderer_n_points_ = 150;
      renderer_angle_step_ = 10;
-     renderer_radius_min_ = 0.4;
-     renderer_radius_max_ = 0.8;
-     renderer_radius_step_ = 0.2;
+     renderer_radius_min_ = atof(argv[8]);
+     renderer_radius_max_ = atof(argv[9]);
+     renderer_radius_step_ = atof(argv[10]);
      renderer_width_ = atoi(argv[3]);
      renderer_height_ = atoi(argv[4]);
      renderer_near_ = 0.1;
