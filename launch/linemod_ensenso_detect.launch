@@ -1,0 +1,25 @@
+<launch>
+<!--start linemod detection -->
+  <arg name="linemod_template_input_path" default="$(find linemod_pose_estimation)/config/data/coke_linemod_ensenso_templates.yml" />
+  <arg name="linemod_renderer_params_input_path" default="$(find linemod_pose_estimation)/config/data/coke_linemod_ensenso_renderer_params.yml" />
+  <arg name="model_STL_file_path" default="$(find linemod_pose_estimation)/config/stl/coke.stl" />
+  <arg name="detect_score_threshold" default="90.0" />
+  <arg name="obj_clustering_distance_threshold" default="0.04" />
+  <arg name="ICP_maximum_iterations" default="25" />
+<!--if the transformation (only the translation, i think) betweent two consecutive pointclouds lower than it, algorithm stops -->
+  <arg name="ICP_Transformation_Epsilon" default="0.001" />
+  <arg name="ICP_Euclidean_Fitness_Epsilon" default="0.002" />
+  <arg name="color_image_topic" default="" />
+  <arg name="depth_image_topic" default="" />
+  
+    <node name="linemod_detect_node" pkg="linemod_pose_estimation" type="linemod_detect_modified_node" output="screen" respawn="false" args="$(arg linemod_template_input_path)
+                                      $(arg linemod_renderer_params_input_path) 
+                                      $(arg model_STL_file_path) 
+                                      $(arg detect_score_threshold) 
+                                      $(arg obj_clustering_distance_threshold) 
+                                      $(arg ICP_maximum_iterations) 
+                                      $(arg ICP_Transformation_Epsilon)
+                                      $(arg ICP_Euclidean_Fitness_Epsilon)
+				      $(arg color_image_topic) 
+                                      $(arg color_image_topic)" />
+</launch>
