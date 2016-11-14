@@ -22,7 +22,11 @@
 //#include <object_recognition_core/common/pose_result.h>
 //#include <object_recognition_core/db/ModelReader.h>
 
+//Eigen
+#include <Eigen/Dense>
+
 //opencv
+#include <opencv2/core/eigen.hpp>
 #include <opencv2/core/core.hpp>
 #include <opencv2/highgui/highgui.hpp>
 #include <opencv2/imgproc/imgproc.hpp>
@@ -36,6 +40,7 @@
 //boost
 #include <boost/foreach.hpp>
 
+//std
 #include <math.h>
 
 //time synchronize
@@ -91,6 +96,16 @@ struct LinemodData{
   cv::Vec3f t;
   cv::Point location;
   bool check_done;
+};
+
+struct match_xyz{
+    match_xyz(const cv::linemod::Match& match,const cv::Vec3f& position)
+    {
+        match_=match;
+        position_=position;
+    }
+    cv::linemod::Match match_;
+    cv::Vec3f position_;
 };
 
 class linemod_detect
@@ -160,7 +175,7 @@ public:
             sync(SyncPolicy(1), sub_color, sub_depth),
             px_match_min_(0.25f),
             icp_dist_min_(0.06f),
-            vote_thresh(6)
+            vote_thresh(3)
         {
             //pub test
             //pub_color_=it.advertise ("/sync_rgb",2);
@@ -334,6 +349,9 @@ public:
              int voting_height_cells=(int)(position_voting_height/voting_height_step)+1;
              int voting_depth_cells=(int)(position_voting_depth/voting_depth_step)+1;
 
+             //create a map for non-maxima suppression
+             Mat NAS_map=Mat::zeros(voting_height_cells,voting_width_cells,CV_8UC1);
+
              unsigned int *accumulator =(unsigned int*)calloc (voting_width_cells*voting_height_cells*voting_depth_cells,sizeof(unsigned int));
              std::map<unsigned int, std::vector<linemod::Match> > map_match;
              int max_index=0;
@@ -349,6 +367,8 @@ public:
                            height_index*voting_width_cells+
                            width_index;
                  accumulator[index]++;
+                 //accumulate votes for non-maxima suppression
+                 NAS_map.at<uchar>(height_index,width_index)+=1;
                  //Use MAP to store matches of the same index
                  if(map_match.find (index)==map_match.end ())
                  {
@@ -396,16 +416,37 @@ public:
              imshow("display_remain",display_remaind_match);
              cv::waitKey (1);
 
-             //Retrive Rotation matrix
-             vector<vector<Mat> > rotation_matrix_clusters;
+             //XYZ space voting
+             float xyz_voting_step=0.005; //Unit: m
              for(vector<vector<linemod::Match> >::iterator it1 = match_clusters.begin();it1 != match_clusters.end();++it1)
              {
-                 vector<Mat> tmp_matrix;
+                 //Map for storing vector of match and its XYZ. Note that size of the vector denotes the votes for the cell
+                 std::map<vector<int>,vector<match_xyz> > xyz_accumulator;
                  for(std::vector<linemod::Match>::iterator it2= it1->begin();it2 != it1->end();it2++)
                  {
-                    tmp_matrix.push_back(Rs_[it2->template_id]);
+                     cv::Vec3f template_center=depth_real_ref_raw.at<cv::Vec3f>(it2->y,it2->x);
+                     //If it is a nan point, continue
+                     if(!cv::checkRange(template_center))
+                         continue;
+                     cv::Vec3f obj_center=template_center+cv::Vec3f(0,0,Distances_[it2->template_id]);
+                     vector<int> index(3);
+                     for(int i=0;i<3;++i)
+                        index[i]=obj_center[i]/xyz_voting_step;
+                     //Store the index to the map
+                     if(xyz_accumulator.find(index) == xyz_accumulator.end())
+                     {
+                         vector<match_xyz> tmp_vec;
+                         tmp_vec.push_back(match_xyz(*it2,obj_center));
+                         xyz_accumulator.insert(pair<vector<int>,vector<match_xyz> >(index,tmp_vec));
+                     }
+                     else
+                     {
+                         xyz_accumulator[index].push_back(match_xyz(*it2,obj_center));
+                     }
+
+
                  }
-                 rotation_matrix_clusters.push_back(tmp_matrix);
+                 int p=0;
              }
 
              return;
@@ -728,6 +769,88 @@ public:
              final_poses.clear ();
              //publish the point clouds
 
+        }
+
+        //Get corresponding rotation matrix with the input of clusters of linemod match
+        void get_rotation_clusters(vector<vector<linemod::Match> >& match_clusters,vector<vector<Eigen::Matrix3d> >& eigen_rot_mat_clusters)
+        {
+            for(vector<vector<linemod::Match> >::iterator it1 = match_clusters.begin();it1 != match_clusters.end();++it1)
+            {
+                vector<Eigen::Matrix3d> tmp_matries;
+                for(std::vector<linemod::Match>::iterator it2= it1->begin();it2 != it1->end();it2++)
+                {
+                    Eigen::Matrix3d tmp_matrix;
+                    cv2eigen(Rs_[it2->template_id],tmp_matrix);
+                    tmp_matries.push_back(tmp_matrix);
+                }
+                eigen_rot_mat_clusters.push_back(tmp_matries);
+            }
+
+            //Convert rotation matrix to Z-Y-X euler angles if needed
+            vector<vector<Eigen::Vector3d> > eigen_euler_clusters;
+            for(vector<vector<Eigen::Matrix3d> >::iterator it1 = eigen_rot_mat_clusters.begin();it1 != eigen_rot_mat_clusters.end();++it1)
+            {
+                vector<Eigen::Vector3d> tmp_euler_angles;
+                for(std::vector<Eigen::Matrix3d>::iterator it2= it1->begin();it2 != it1->end();it2++)
+                {
+                    Eigen::Vector3d tmp_euler;
+                    tmp_euler=it2->eulerAngles(2,1,0);
+                    tmp_euler_angles.push_back(tmp_euler);
+                }
+                eigen_euler_clusters.push_back(tmp_euler_angles);
+            }
+
+            //Extract z axis component of rotation matrix
+//             vector<vector<Eigen::Vector3d> > eigen_zAxis_pose_clusters;
+//             for(vector<vector<Eigen::Matrix3d> >::iterator it1 = eigen_rot_mat_clusters.begin();it1 != eigen_rot_mat_clusters.end();++it1)
+//             {
+//                 vector<Eigen::Vector3d> tmp_zAxis;
+//                 for(std::vector<Eigen::Matrix3d>::iterator it2= it1->begin();it2 != it1->end();it2++)
+//                 {
+//                     Eigen::Vector3d tmp_z;
+//                     if((*it2)(1,2)<0.0)
+//                     {
+//                         tmp_z[0]=-(*it2)(0,2);
+//                         tmp_z[1]=-(*it2)(1,2);
+//                         tmp_z[2]=-(*it2)(2,2);
+//                     }else
+//                         {
+//                         tmp_z[0]=(*it2)(0,2);
+//                         tmp_z[1]=(*it2)(1,2);
+//                         tmp_z[2]=(*it2)(2,2);
+//                     }
+//                     tmp_zAxis.push_back(tmp_z);
+//                 }
+//                 eigen_zAxis_pose_clusters.push_back(tmp_zAxis);
+//             }
+
+            //Construct ZYX voting space
+//             double orientation_voting_range=2*CV_PI; //-pi to pi
+//             double angle_step=60.0/180.0*CV_PI;
+//             for(vector<vector<Eigen::Vector3d> >::iterator it1 = eigen_euler_clusters.begin();it1 != eigen_euler_clusters.end();++it1)
+//             {
+//                 std::map<vector<int>, std::vector<Eigen::Vector3d> > map_ZYX_euler;
+//                 for(std::vector<Eigen::Vector3d>::iterator it2= it1->begin();it2 != it1->end();it2++)
+//                 {
+//                     vector<int> euler_index(3);
+//                     euler_index[0]=(int)((*it2)[0]/angle_step);
+//                     euler_index[1]=(int)((*it2)[1]/angle_step);
+//                     euler_index[2]=(int)((*it2)[2]/angle_step);
+//                     if(map_ZYX_euler.find(euler_index)==map_ZYX_euler.end())
+//                     {
+//                        vector<Eigen::Vector3d> temp;
+//                        temp.push_back(*it2);
+//                        map_ZYX_euler.insert(pair<vector<int>,vector<Eigen::Vector3d> >(euler_index,temp));
+//                     }
+//                     else
+//                     {
+//                        map_ZYX_euler[euler_index].push_back(*it2);
+//                     }
+
+//                 }
+
+//                 int p=0;
+//             }
         }
 
         static cv::Ptr<cv::linemod::Detector> readLinemod(const std::string& filename)
