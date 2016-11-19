@@ -175,7 +175,7 @@ public:
             sync(SyncPolicy(1), sub_color, sub_depth),
             px_match_min_(0.25f),
             icp_dist_min_(0.06f),
-            vote_thresh(3)
+            vote_thresh(5)
         {
             //pub test
             //pub_color_=it.advertise ("/sync_rgb",2);
@@ -302,12 +302,12 @@ public:
              Mat display=mat_rgb;
              Mat display_remaind_match;
              mat_rgb.copyTo(display_remaind_match);
-             for(std::vector<linemod::Match>::iterator it= matches.begin();it != matches.end();it++)
-             {
-                 std::vector<cv::linemod::Template> templates=detector->getTemplates(it->class_id, it->template_id);
-                 drawResponse(templates, 1, display,cv::Point(it->x,it->y), 2,2);
-             }
-             imshow("display",display);
+//             for(std::vector<linemod::Match>::iterator it= matches.begin();it != matches.end();it++)
+//             {
+//                 std::vector<cv::linemod::Template> templates=detector->getTemplates(it->class_id, it->template_id);
+//                 drawResponse(templates, 1, display,cv::Point(it->x,it->y), 2,2);
+//             }
+//             imshow("display",display);
 
 
              //If no match is found, return
@@ -341,19 +341,19 @@ public:
              int position_voting_height=renderer_height; //480
              float position_voting_depth=renderer_radius_max-renderer_radius_min;
 
-             int voting_width_step=10; //Unit: pixel
-             int voting_height_step=10; //Unit: pixel, width step and height step suppose to be the same
+             int voting_width_step=3; //Unit: pixel
+             int voting_height_step=3; //Unit: pixel, width step and height step suppose to be the same
              float voting_depth_step=renderer_radius_step;//Unit: m
 
-             int voting_width_cells=(int)(position_voting_width/voting_width_step)+1;
-             int voting_height_cells=(int)(position_voting_height/voting_height_step)+1;
+             int voting_width_cells=(int)(position_voting_width/voting_width_step);
+             int voting_height_cells=(int)(position_voting_height/voting_height_step);
              int voting_depth_cells=(int)(position_voting_depth/voting_depth_step)+1;
 
              //create a map for non-maxima suppression
-             Mat NAS_map=Mat::zeros(voting_height_cells,voting_width_cells,CV_8UC1);
+             Mat NMS_map=Mat::zeros(voting_height_cells,voting_width_cells,CV_8UC1);
 
              unsigned int *accumulator =(unsigned int*)calloc (voting_width_cells*voting_height_cells*voting_depth_cells,sizeof(unsigned int));
-             std::map<unsigned int, std::vector<linemod::Match> > map_match;
+             std::map<std::vector<int>, std::vector<linemod::Match> > map_match;
              int max_index=0;
              int max_vote=0;
 
@@ -363,18 +363,23 @@ public:
                  int width_index=match.x/voting_width_step;
                  float depth = Obj_origin_dists[match.template_id];//the distance from the object origin to the camera origin
                  int depth_index=(int)((depth-renderer_radius_min)/voting_depth_step);
-                 int index=depth_index*voting_width_cells*voting_height_cells+
-                           height_index*voting_width_cells+
-                           width_index;
-                 accumulator[index]++;
-                 //accumulate votes for non-maxima suppression
-                 NAS_map.at<uchar>(height_index,width_index)+=1;
+
+                 //fill the index
+                 vector<int> index(3);
+                 index[0]=height_index;
+                 index[1]=width_index;
+                 index[2]=depth_index;
+//                 int index=depth_index*voting_width_cells*voting_height_cells+
+//                           height_index*voting_width_cells+
+//                           width_index;
+//                 accumulator[index]++;
+
                  //Use MAP to store matches of the same index
                  if(map_match.find (index)==map_match.end ())
                  {
                      std::vector<linemod::Match> temp;
                      temp.push_back (match);
-                     map_match.insert(pair<unsigned int,std::vector<linemod::Match> >(index,temp));
+                     map_match.insert(pair<std::vector<int>,std::vector<linemod::Match> >(index,temp));
                  }
                  else
                  {
@@ -383,46 +388,126 @@ public:
 
              }
 
-             //Extract all cells with more than one vote
-             vector<vector<linemod::Match> > match_all_clusters;
-             #pragma omp parallel for
-             for(int index=0;index<voting_width_cells*voting_height_cells*voting_depth_cells;++index)
+             //Filter the clusters with votes fewer than [vote_thresh]
+             std::map<std::vector<int>, std::vector<linemod::Match> > map_filter_match;
+             std::vector<std::pair<int,int> > NMS_row_col_index;
+             Mat NMS_viz_before=cv::Mat::zeros(NMS_map.rows,NMS_map.cols,CV_8UC1);
+             Mat NMS_viz_after=cv::Mat::zeros(NMS_map.rows,NMS_map.cols,CV_8UC1);
+             for(std::map<std::vector<int>, std::vector<linemod::Match> >::iterator it =map_match.begin();it!=map_match.end();++it)
              {
-                 if(accumulator[index]>1)
+                 if(it->second.size()>vote_thresh)
                  {
-                     match_all_clusters.push_back(map_match[index]);
+                     map_filter_match.insert(*it);
+                     int row_index=(it->first)[0];
+                     int col_index=(it->first)[1];
+                     NMS_map.at<uchar>(row_index,col_index)=NMS_map.at<uchar>(row_index,col_index)+it->second.size();
+
+                     //for visualization
+                     NMS_viz_before.at<uchar>(row_index,col_index)=255;
+                     NMS_viz_after.at<uchar>(row_index,col_index)=255;
+
+                     NMS_row_col_index.push_back(std::pair<int,int>(row_index,col_index));
+                 }
+             }
+
+             //Viz the result after vote thresholding
+             for(std::map<std::vector<int>, std::vector<linemod::Match> >::iterator it1 = map_filter_match.begin();it1 != map_filter_match.end();++it1)
+             {
+                 for(std::vector<linemod::Match>::iterator it2= it1->second.begin();it2 != it1->second.end();it2++)
+                 {
+                     std::vector<cv::linemod::Template> templates=detector->getTemplates(it2->class_id, it2->template_id);
+                     drawResponse(templates, 1, display,cv::Point(it2->x,it2->y), 2,3);
+                 }
+             }
+             imshow("display",display);
+             std::cout<<"(2) RCD clustering suppression result: "<< map_filter_match.size()<<std::endl;
+
+             int NMS_neigh=60;
+             //Implement non-maxima suppression
+             for(std::vector<std::pair<int,int> >::iterator it = NMS_row_col_index.begin();it!=NMS_row_col_index.end();++it)
+                {
+                 int i=it->first;
+                 int j=it->second;
+                 int max_vote=NMS_map.at<uchar>(i,j);
+                 for(int m=-NMS_neigh;m<=NMS_neigh;m++)
+                 {
+                    bool is_break=false;
+                    for(int n=-NMS_neigh;n<=NMS_neigh;n++)
+                       {
+                          if(i+m >= 0 && i+m < NMS_map.rows && j+n >= 0 && j+n < NMS_map.cols)
+                            {
+                              if((NMS_map.at<uchar>(i+m,j+n)>=max_vote))
+                                {
+                                   if(i+m == i && j+n ==j){}
+                                   else{
+                                        NMS_map.at<uchar>(i,j)=0;
+                                        NMS_viz_after.at<uchar>(i,j)=0;
+                                        is_break=true;
+                                        }
+//                                    break;
+                                }
+                            }
+                       }
+//                    if(is_break)
+//                        break;
+                  }
+
+
+                 }
+
+             imshow("before",NMS_viz_before);
+             imshow("after",NMS_viz_after);
+             //cv::waitKey(0);
+
+             //Filter the non-maxima clusters
+                //loop over the NMS map
+             std::map<std::vector<int>, std::vector<linemod::Match> > map_nms_match;
+             for(int i=0;i<NMS_map.rows;++i)
+             {
+                 for(int j=0;j<NMS_map.cols;++j)
+                 {
+                     int vote= NMS_map.at<uchar>(i,j);
+                     if(vote>0)
+                    {
+                     int NMS_row_index=i;
+                     int NMS_col_index=j;
+                     for(std::map<std::vector<int>, std::vector<linemod::Match> >::iterator it2=map_filter_match.begin();it2!=map_filter_match.end();++it2)
+                         {
+                         int row_index=(it2->first)[0];
+                         int col_index=(it2->first)[1];;
+                         if(row_index == NMS_row_index && col_index == NMS_col_index)
+                         {
+                             map_nms_match.insert(*it2);
+                         }
+                     }
+                    }
+
                  }
 
              }
 
-             //Extract cells with more than [vote_thresh] vote
-             vector<vector<linemod::Match> > match_clusters;
-             for(vector<vector<linemod::Match> >::iterator it = match_all_clusters.begin();it != match_all_clusters.end();++it)
-             {
-                 if(it->size()>vote_thresh)
-                     match_clusters.push_back(*it);
-             }
 
 
              //Viz the remain matches
-             for(vector<vector<linemod::Match> >::iterator it1 = match_clusters.begin();it1 != match_clusters.end();++it1)
+             for(std::map<std::vector<int>, std::vector<linemod::Match> >::iterator it1 = map_nms_match.begin();it1 != map_nms_match.end();++it1)
              {
-                 for(std::vector<linemod::Match>::iterator it2= it1->begin();it2 != it1->end();it2++)
+                 for(std::vector<linemod::Match>::iterator it2= it1->second.begin();it2 != it1->second.end();it2++)
                  {
                      std::vector<cv::linemod::Template> templates=detector->getTemplates(it2->class_id, it2->template_id);
                      drawResponse(templates, 1, display_remaind_match,cv::Point(it2->x,it2->y), 2,4);
                  }
              }
+             std::cout<<"(3) Non-maxima suppression result: "<< map_nms_match.size()<<std::endl;
              imshow("display_remain",display_remaind_match);
-             cv::waitKey (1);
+             cv::waitKey (0);
 
              //XYZ space voting
              float xyz_voting_step=0.005; //Unit: m
-             for(vector<vector<linemod::Match> >::iterator it1 = match_clusters.begin();it1 != match_clusters.end();++it1)
+             for(std::map<std::vector<int>, std::vector<linemod::Match> >::iterator it1 = map_filter_match.begin();it1 != map_filter_match.end();++it1)
              {
                  //Map for storing vector of match and its XYZ. Note that size of the vector denotes the votes for the cell
                  std::map<vector<int>,vector<match_xyz> > xyz_accumulator;
-                 for(std::vector<linemod::Match>::iterator it2= it1->begin();it2 != it1->end();it2++)
+                 for(std::vector<linemod::Match>::iterator it2= it1->second.begin();it2 != it1->second.end();it2++)
                  {
                      cv::Vec3f template_center=depth_real_ref_raw.at<cv::Vec3f>(it2->y,it2->x);
                      //If it is a nan point, continue
@@ -452,8 +537,10 @@ public:
              return;
 
              //get matches according to the index
+                //access the 1st element just for compling...
              std::vector<linemod::Match> match_result;
-             match_result=map_match[max_index];
+             std::map<std::vector<int>, std::vector<linemod::Match> >::iterator iter =map_match.begin();
+             match_result=iter->second;
 
              //only withdraw the first match of the matches
              linemod::Match match=match_result[0];
