@@ -166,6 +166,7 @@ public:
     tf::TransformBroadcaster tf_broadcaster;
 
     int vote_thresh;
+
 public:
         linemod_detect(std::string template_file_name,std::string renderer_params_name,std::string mesh_path,float detect_score_threshold,float clustering_threshold,int icp_max_iter,float icp_tr_epsilon,float icp_fitness_threshold):
             it(nh),
@@ -175,7 +176,7 @@ public:
             sync(SyncPolicy(1), sub_color, sub_depth),
             px_match_min_(0.25f),
             icp_dist_min_(0.06f),
-            vote_thresh(5)
+            vote_thresh(6)
         {
             //pub test
             //pub_color_=it.advertise ("/sync_rgb",2);
@@ -227,88 +228,35 @@ public:
 
         void detect_cb(const sensor_msgs::ImageConstPtr& msg_rgb , const sensor_msgs::ImageConstPtr& msg_depth)
         {
-
+            //Read camera intrinsic params
             if(!is_K_read)
                 return;
-
+            //If LINEMOD detector is not loaded correctly, return
             if(detector->classIds ().empty ())
             {
                 ROS_INFO("Linemod detector is empty");
                 return;
             }
 
-            //Convert ros msg to OpenCV mat
-            cv_bridge::CvImagePtr img_ptr_rgb;
-            cv_bridge::CvImagePtr img_ptr_depth;
-            std::vector<Mat> sources;
+            //Get LINEMOD source image
+            vector<Mat> sources;
+            rosMsgs_to_linemodSources(msg_rgb,msg_depth,sources);
+            Mat mat_rgb,mat_depth;
+            mat_rgb=sources[0];
+            mat_depth=sources[1];
 
-            try{
-                 img_ptr_depth = cv_bridge::toCvCopy(*msg_depth);
-             }
-             catch (cv_bridge::Exception& e)
-             {
-                 ROS_ERROR("cv_bridge exception:  %s", e.what());
-                 return;
-             }
-             try{
-                 img_ptr_rgb = cv_bridge::toCvCopy(*msg_rgb, sensor_msgs::image_encodings::BGR8);
-             }
-             catch (cv_bridge::Exception& e)
-             {
-                 ROS_ERROR("cv_bridge exception:  %s", e.what());
-                 return;
-             }
-             cv::Mat mat_depth;
-             if(img_ptr_depth->image.depth ()==CV_32F)
-             {
-                img_ptr_depth->image.convertTo (mat_depth,CV_16UC1,1000.0);
-             }
-             else
-             {
-                 img_ptr_depth->image.copyTo(mat_depth);
-             }
+            //Perform the LINEMOD detection
+            std::vector<linemod::Match> matches;
+            double t=cv::getTickCount ();
+            detector->match (sources,threshold,matches,std::vector<String>(),noArray());
+            t=(cv::getTickCount ()-t)/cv::getTickFrequency ();
+            cout<<"Time consumed by template matching: "<<t<<" s"<<endl;
+            cout<<"(1) LINEMOD Matching Result: "<< matches.size()<<endl;
 
-             cv::Mat mat_rgb;
-             if(img_ptr_rgb->image.rows>960)
-             {
-                 cv::pyrDown (img_ptr_rgb->image.rowRange (0,960),mat_rgb);
-             }
-             else{
-                  mat_rgb = img_ptr_rgb->image;
-             }
-
-             cv::Mat mat_gray;
-             cvtColor (mat_rgb,mat_gray,CV_BGR2GRAY);
-            //set ROI
-//             cv::Mat Mask=cv::Mat::zeros (480,640,CV_8UC1);
-//             cv::Rect roi_rect=cv::Rect(125,0,391,326);//baxter table 0,55,635,239
-//             Mask(roi_rect)=255;
-//             std::vector<cv::Mat> masks;
-//             masks.push_back (Mask);
-//             masks.push_back (Mask);
-
-             //Perform the LINEMOD detection
-             sources.push_back (mat_rgb);
-             sources.push_back (mat_depth);
-             std::vector<linemod::Match> matches;
-             double t;
-             t=cv::getTickCount ();
-             detector->match (sources,threshold,matches,std::vector<String>(),noArray());
-             t=(cv::getTickCount ()-t)/cv::getTickFrequency ();
-             cout<<"Time consumed by template matching: "<<t<<" s"<<endl;
-             cout<<"(1) LINEMOD Matching Result: "<< matches.size()<<endl;
-
-             //Viz all the detected result
-             Mat display=mat_rgb;
-             Mat display_remaind_match;
-             mat_rgb.copyTo(display_remaind_match);
-//             for(std::vector<linemod::Match>::iterator it= matches.begin();it != matches.end();it++)
-//             {
-//                 std::vector<cv::linemod::Template> templates=detector->getTemplates(it->class_id, it->template_id);
-//                 drawResponse(templates, 1, display,cv::Point(it->x,it->y), 2,2);
-//             }
-//             imshow("display",display);
-
+            //Viz all the detected result
+            Mat display=sources[0];
+            Mat display_remaind_match;
+            display.convertTo(display_remaind_match,CV_8UC3);
 
              //If no match is found, return
              if(matches.size()==0)
@@ -325,71 +273,20 @@ public:
 //             average_distance=average_distance/matches.size();
 //             cout<<average_distance<<endl;
 
-             //convert the depth image to 3d pointcloud
-             cv::Mat_<cv::Vec3f> depth_real_ref_raw;
-             cv::depthTo3d(mat_depth, K_depth, depth_real_ref_raw);
-
-
              pci_real_icpin_model->clear();
              pci_real_icpin_ref->clear();
 
-             //pci_real_nonICP_model->clear ();
-            // pci_real_1stICP_model->clear ();
 //----------------3D Voting-----------------------------------------------------//
-
-             int position_voting_width=renderer_width; //640 or 752
-             int position_voting_height=renderer_height; //480
-             float position_voting_depth=renderer_radius_max-renderer_radius_min;
-
-             int voting_width_step=3; //Unit: pixel
-             int voting_height_step=3; //Unit: pixel, width step and height step suppose to be the same
-             float voting_depth_step=renderer_radius_step;//Unit: m
-
-             int voting_width_cells=(int)(position_voting_width/voting_width_step);
-             int voting_height_cells=(int)(position_voting_height/voting_height_step);
-             int voting_depth_cells=(int)(position_voting_depth/voting_depth_step)+1;
-
-             //create a map for non-maxima suppression
-             Mat NMS_map=Mat::zeros(voting_height_cells,voting_width_cells,CV_8UC1);
-
-             unsigned int *accumulator =(unsigned int*)calloc (voting_width_cells*voting_height_cells*voting_depth_cells,sizeof(unsigned int));
              std::map<std::vector<int>, std::vector<linemod::Match> > map_match;
-             int max_index=0;
-             int max_vote=0;
-
-             BOOST_FOREACH(const linemod::Match& match,matches){
-                 //Get height(row), width(cols), depth index
-                 int height_index=match.y/voting_height_step;
-                 int width_index=match.x/voting_width_step;
-                 float depth = Obj_origin_dists[match.template_id];//the distance from the object origin to the camera origin
-                 int depth_index=(int)((depth-renderer_radius_min)/voting_depth_step);
-
-                 //fill the index
-                 vector<int> index(3);
-                 index[0]=height_index;
-                 index[1]=width_index;
-                 index[2]=depth_index;
-//                 int index=depth_index*voting_width_cells*voting_height_cells+
-//                           height_index*voting_width_cells+
-//                           width_index;
-//                 accumulator[index]++;
-
-                 //Use MAP to store matches of the same index
-                 if(map_match.find (index)==map_match.end ())
-                 {
-                     std::vector<linemod::Match> temp;
-                     temp.push_back (match);
-                     map_match.insert(pair<std::vector<int>,std::vector<linemod::Match> >(index,temp));
-                 }
-                 else
-                 {
-                     map_match[index].push_back(match);
-                 }
-
-             }
+             int vote_row_col_step=4;
+             double vote_depth_step=renderer_radius_step;
+             int voting_height_cells,voting_width_cells;
+             rcd_voting(vote_row_col_step, vote_depth_step, matches,map_match, voting_height_cells, voting_width_cells);
 
              //Filter the clusters with votes fewer than [vote_thresh]
              std::map<std::vector<int>, std::vector<linemod::Match> > map_filter_match;
+             //create a map for non-maxima suppression
+             Mat NMS_map=Mat::zeros(voting_height_cells,voting_width_cells,CV_8UC1);
              std::vector<std::pair<int,int> > NMS_row_col_index;
              Mat NMS_viz_before=cv::Mat::zeros(NMS_map.rows,NMS_map.cols,CV_8UC1);
              Mat NMS_viz_after=cv::Mat::zeros(NMS_map.rows,NMS_map.cols,CV_8UC1);
@@ -422,7 +319,7 @@ public:
              imshow("display",display);
              std::cout<<"(2) RCD clustering suppression result: "<< map_filter_match.size()<<std::endl;
 
-             int NMS_neigh=60;
+             int NMS_neigh=6;
              //Implement non-maxima suppression
              for(std::vector<std::pair<int,int> >::iterator it = NMS_row_col_index.begin();it!=NMS_row_col_index.end();++it)
                 {
@@ -502,6 +399,10 @@ public:
              cv::waitKey (0);
 
              //XYZ space voting
+                //convert the depth image to 3d pointcloud
+             cv::Mat_<cv::Vec3f> depth_real_ref_raw;
+             cv::depthTo3d(mat_depth, K_depth, depth_real_ref_raw);
+
              float xyz_voting_step=0.005; //Unit: m
              for(std::map<std::vector<int>, std::vector<linemod::Match> >::iterator it1 = map_filter_match.begin();it1 != map_filter_match.end();++it1)
              {
@@ -858,6 +759,119 @@ public:
 
         }
 
+        void rosMsgs_to_linemodSources(const sensor_msgs::ImageConstPtr& msg_rgb , const sensor_msgs::ImageConstPtr& msg_depth,vector<Mat>& sources)
+        {
+            //Convert ros msg to OpenCV mat
+            cv_bridge::CvImagePtr img_ptr_rgb;
+            cv_bridge::CvImagePtr img_ptr_depth;
+            Mat mat_rgb;
+            Mat mat_depth;
+
+            try{
+                 img_ptr_depth = cv_bridge::toCvCopy(*msg_depth);
+             }
+             catch (cv_bridge::Exception& e)
+             {
+                 ROS_ERROR("cv_bridge exception:  %s", e.what());
+                 return;
+             }
+             try{
+                 img_ptr_rgb = cv_bridge::toCvCopy(*msg_rgb, sensor_msgs::image_encodings::BGR8);
+             }
+             catch (cv_bridge::Exception& e)
+             {
+                 ROS_ERROR("cv_bridge exception:  %s", e.what());
+                 return;
+             }
+
+             if(img_ptr_depth->image.depth ()==CV_32F)
+             {
+                img_ptr_depth->image.convertTo (mat_depth,CV_16UC1,1000.0);
+             }
+             else
+             {
+                 img_ptr_depth->image.copyTo(mat_depth);
+             }
+
+
+             if(img_ptr_rgb->image.rows>960)
+             {
+                 cv::pyrDown (img_ptr_rgb->image.rowRange (0,960),mat_rgb);
+             }
+             else{
+                  mat_rgb = img_ptr_rgb->image;
+             }
+
+
+             //test
+//             cout<<"Before conversion"<<endl;
+//             MatIterator_<float> it =img_ptr_depth->image.begin<float>();
+//             for(;it!=img_ptr_depth->image.end<float>();++it)
+//                 cout<<*it<<endl;
+
+//             cout<<"After conversion"<<endl;
+//             MatIterator_<ushort> it2 =mat_depth.begin<ushort>();
+//             for(;it2!=mat_depth.end<ushort>();++it2)
+//                 cout<<*it2<<endl;
+
+            //set ROI
+//             cv::Mat Mask=cv::Mat::zeros (480,640,CV_8UC1);
+//             cv::Rect roi_rect=cv::Rect(125,0,391,326);//baxter table 0,55,635,239
+//             Mask(roi_rect)=255;
+//             std::vector<cv::Mat> masks;
+//             masks.push_back (Mask);
+//             masks.push_back (Mask);
+             sources.push_back(mat_rgb);
+             sources.push_back(mat_depth);
+        }
+
+        void rcd_voting(const int& vote_row_col_step,const double& renderer_radius_step_,const vector<linemod::Match>& matches,std::map<std::vector<int>, std::vector<linemod::Match> >& map_match,int& voting_height_cells,int& voting_width_cells)
+        {
+            //----------------3D Voting-----------------------------------------------------//
+
+            int position_voting_width=renderer_width; //640 or 752
+            int position_voting_height=renderer_height; //480
+            float position_voting_depth=renderer_radius_max-renderer_radius_min;
+
+            int voting_width_step=vote_row_col_step; //Unit: pixel
+            int voting_height_step=vote_row_col_step; //Unit: pixel, width step and height step suppose to be the same
+            float voting_depth_step=renderer_radius_step_;//Unit: m
+
+            voting_width_cells=(int)(position_voting_width/voting_width_step);
+            voting_height_cells=(int)(position_voting_height/voting_height_step);
+            int voting_depth_cells=(int)(position_voting_depth/voting_depth_step)+1;            
+
+            int max_index=0;
+            int max_vote=0;
+
+            BOOST_FOREACH(const linemod::Match& match,matches){
+                //Get height(row), width(cols), depth index
+                int height_index=match.y/voting_height_step;
+                int width_index=match.x/voting_width_step;
+                float depth = Obj_origin_dists[match.template_id];//the distance from the object origin to the camera origin
+                int depth_index=(int)((depth-renderer_radius_min)/voting_depth_step);
+
+                //fill the index
+                vector<int> index(3);
+                index[0]=height_index;
+                index[1]=width_index;
+                index[2]=depth_index;
+
+                //Use MAP to store matches of the same index
+                if(map_match.find (index)==map_match.end ())
+                {
+                    std::vector<linemod::Match> temp;
+                    temp.push_back (match);
+                    map_match.insert(pair<std::vector<int>,std::vector<linemod::Match> >(index,temp));
+                }
+                else
+                {
+                    map_match[index].push_back(match);
+                }
+
+            }
+        }
+
         //Get corresponding rotation matrix with the input of clusters of linemod match
         void get_rotation_clusters(vector<vector<linemod::Match> >& match_clusters,vector<vector<Eigen::Matrix3d> >& eigen_rot_mat_clusters)
         {
@@ -1079,10 +1093,10 @@ int main(int argc,char** argv)
     float icp_fitness_th;
     if(argc<8)
     {
-        linemod_template_path="/home/yake/catkin_ws/src/linemod_pose_est/config/data/coke_linemod_templates.yml";
-        renderer_param_path="/home/yake/catkin_ws/src/linemod_pose_est/config/data/coke_linemod_renderer_params.yml";
-        model_stl_path="/home/yake/catkin_ws/src/linemod_pose_est/config/stl/coke.stl";
-        detect_score_th=91.0;
+        linemod_template_path="/home/yake/catkin_ws/src/linemod_pose_est/config/data/pipe_linemod_carmine_templates.yml";
+        renderer_param_path="/home/yake/catkin_ws/src/linemod_pose_est/config/data/pipe_linemod_carmine_renderer_params.yml";
+        model_stl_path="/home/yake/catkin_ws/src/linemod_pose_est/config/stl/pipe_connector.stl";
+        detect_score_th=89.0;
         clustering_th=0.02;
         icp_max_iter=25;
         icp_tr_epsilon=0.0001;

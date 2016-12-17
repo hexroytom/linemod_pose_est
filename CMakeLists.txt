@@ -18,6 +18,7 @@ find_package(catkin REQUIRED COMPONENTS
 )
 # Use OpenCV 3.1.0.
 find_package (OpenCV REQUIRED)
+find_package (PCL REQUIRED)
 
 # Set include dirs
 
@@ -131,6 +132,7 @@ include_directories(
   ${catkin_INCLUDE_DIRS}
   ${OpenCV_INCLUDE_DIRS}
   ${default_INCLUDE_DIRS}
+  ${PCL_INCLUDE_DIRS}
 )
 
 ## Declare a C++ library
@@ -180,6 +182,7 @@ target_link_libraries(linemod_detect_node
 target_link_libraries(linemod_ensenso_detect_node
   ${catkin_LIBRARIES}
   ${OpenCV_LIBRARIES}
+  ${PCL_LIBRARIES}
 )
 
 #target_link_libraries(linemod_detect_modified_node

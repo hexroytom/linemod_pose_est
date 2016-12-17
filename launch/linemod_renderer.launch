@@ -1,6 +1,6 @@
 <launch>
-  <arg name="camera_focal_length_x" default="843.3250" />
-  <arg name="camera_focal_length_y" default="843.3250" />
+  <arg name="camera_focal_length_x" default="844.5966796875" />
+  <arg name="camera_focal_length_y" default="844.5966796875" />
   <arg name="image_width" default="752" />
   <arg name="image_height" default="480" />
   <arg name="model_STL_file_path" default="$(find linemod_pose_estimation)/config/stl/coke.stl" />
