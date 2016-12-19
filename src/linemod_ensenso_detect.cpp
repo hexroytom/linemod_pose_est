@@ -135,6 +135,7 @@ public:
     vector<float> Obj_origin_dists;
     vector<Mat> Ks_;
     Mat K_depth;
+    Matx33d K_rgb;
     Matx33f R_diag;
     int renderer_n_points;
     int renderer_angle_step;
@@ -230,6 +231,9 @@ public:
             R_diag=Matx<float,3,3>(1.0,0.0,0.0,
                                   0.0,1.0,0.0,
                                   0.0,0.0,1.0);
+            K_rgb=Matx<double,3,3>(844.5966796875,0.0,338.907012939453125,
+                                   0.0,844.5966796875,232.793670654296875,
+                                   0.0,0.0,1.0);
 
             //Service client
             ensenso_registImg_client=nh.serviceClient<ensenso::RegistImage>("grab_registered_image");
@@ -590,6 +594,7 @@ public:
          double depth_normal_diff_calc(std::vector<linemod::Match> match_cluster, Mat& depth_img)
          {
              double sum_depth_diff=0.0;
+             double sum_normal_diff=0.0;
              std::vector<linemod::Match>::iterator it_match=match_cluster.begin();
              for(;it_match!=match_cluster.end();++it_match)
               {
@@ -604,32 +609,32 @@ public:
                  cv::Matx33d R_temp(R_match.inv());//rotation of the viewpoint w.r.t the object
                  cv::Vec3d up(-R_temp(0,1), -R_temp(1,1), -R_temp(2,1));//the negative direction of y axis of viewpoint w.r.t object frame
                  cv::Mat depth_template;
-                 renderer_iterator_->renderDepthOnly(depth_template, template_mask, rect, -T_match, up);//up?
+                 renderer_iterator_->renderDepthOnly(depth_template,template_mask, rect, -T_match, up);//up?
+                 rect.x = it_match->x;
+                 rect.y = it_match->y;
 
                  //Compute depth diff for each match
-                 sum_depth_diff+=depth_diff(depth_template,template_mask,rect);
-                 int p=0;
+                 sum_depth_diff+=depth_diff(depth_img,depth_template,template_mask,rect);
 
                  //Compute normal diff for each match
-                    //...
+                 sum_normal_diff+=normal_diff(depth_img,depth_template,template_mask,rect);
              }
              sum_depth_diff=sum_depth_diff/match_cluster.size();
+             sum_normal_diff=sum_normal_diff/match_cluster.size();
+             int p=0;
 
          }
 
-         double depth_diff(cv::Mat& depth_img,cv::Mat& template_mask,cv::Mat& rect)
+         double depth_diff(Mat& depth_img,Mat& depth_template,cv::Mat& template_mask,cv::Rect& rect)
          {
-             //prepare the bounding box for the model and reference point clouds
-             rect.x = it_match->x;
-             rect.y = it_match->y;
+             //Crop ROI in depth image according to the rect
              Mat depth_roi=depth_img(rect);
+             //Convert ROI into a mask. NaN point of depth image will become zero in mask image
              Mat depth_mask;
              depth_roi.convertTo(depth_mask,CV_8UC1,1,0);
+             //And operation. Only valid points in both images will be considered.
              Mat mask;
              bitwise_and(template_mask,depth_mask,mask);
-             //             imshow("1",template_mask);
-             //             imshow("2",mask);
-             //             waitKey(0);
 
              //Perform subtraction and accumulate differences
              //-------- Method A for computing depth diff----//
@@ -661,8 +666,45 @@ public:
              return sum;
          }
 
-         double normal_diff()
+         double normal_diff(cv::Mat& depth_img,Mat& depth_template,cv::Mat& template_mask,cv::Rect& rect)
          {
+             //Crop ROI in depth image according to the rect
+             Mat depth_roi=depth_img(rect);
+             //Convert ROI into a mask. NaN point of depth image will become zero in mask image
+             Mat depth_mask;
+             depth_roi.convertTo(depth_mask,CV_8UC1,1,0);
+             //And operation. Only valid points in both images will be considered.
+             Mat mask;
+             bitwise_and(template_mask,depth_mask,mask);
+
+             //Normal estimation for both depth images
+            RgbdNormals normal_est(depth_roi.rows,depth_roi.cols,CV_64F,K_rgb,5,RgbdNormals::RGBD_NORMALS_METHOD_LINEMOD);
+            Mat template_normal,roi_normal;
+            normal_est(depth_roi,roi_normal);
+            normal_est(depth_template,template_normal);
+
+            //Compute normal diff
+            Mat subtraction=roi_normal-template_normal;
+            MatIterator_<uchar> it_mask=mask.begin<uchar>();
+            MatIterator_<Vec3d> it_subs=subtraction.begin<Vec3d>();
+            double sum=0.0;
+            int num=0;
+            for(;it_mask!=mask.end<uchar>();++it_mask,++it_subs)
+            {
+                if(*it_mask>0)
+                {
+                    if(isValidDepth((*it_subs)[0]) && isValidDepth((*it_subs)[1]) && isValidDepth((*it_subs)[2]))
+                    {
+                        double abs_diff=abs((*it_subs)[0])+abs((*it_subs)[1])+abs((*it_subs)[2]);
+                        sum+=1/(abs_diff+1);
+                        num++;
+                    }
+
+                }
+
+            }
+            sum/=num;
+            return sum;
 
          }
 };
