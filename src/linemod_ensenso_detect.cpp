@@ -72,6 +72,30 @@ typedef pcl::PointCloud<pcl::PointXYZ> PointCloudXYZ;
 using namespace cv;
 using namespace std;
 
+//Score based on evaluation for 1 cluster
+struct ClusterData{
+
+    ClusterData()
+    {
+        index.resize(3);
+        is_checked=false;
+    }
+
+    ClusterData(const vector<int> index_,double score_):
+        index(index_),
+        score(score_),
+        is_checked(false)
+    {
+
+    }
+
+    vector<linemod::Match> matches;
+    vector<int> index;
+    double score;
+    bool is_checked;
+
+};
+
 struct LinemodData{
   LinemodData(
           std::vector<cv::Vec3f> _pts_ref,
@@ -123,6 +147,7 @@ class linemod_detect
 
     //voting space
     unsigned int* accumulator;
+    uchar clustering_step_;
 
 public:
     Ptr<linemod::Detector> detector;
@@ -174,14 +199,15 @@ public:
 
 
 public:
-        linemod_detect(std::string template_file_name,std::string renderer_params_name,std::string mesh_path,float detect_score_threshold,float clustering_threshold,int icp_max_iter,float icp_tr_epsilon,float icp_fitness_threshold):
+        linemod_detect(std::string template_file_name,std::string renderer_params_name,std::string mesh_path,float detect_score_threshold,float clustering_threshold,int icp_max_iter,float icp_tr_epsilon,float icp_fitness_threshold,uchar clustering_step):
             it(nh),
             sub_color(nh,"/camera/rgb/image_rect_color",1),
             sub_depth(nh,"/camera/depth_registered/image_raw",1),
             depth_frame_id_("camera_link"),
             sync(SyncPolicy(1), sub_color, sub_depth),
             px_match_min_(0.25f),
-            icp_dist_min_(0.06f)
+            icp_dist_min_(0.06f),
+            clustering_step_(clustering_step)
         {
             //Publisher
             //pub_color_=it.advertise ("/sync_rgb",2);
@@ -312,12 +338,10 @@ public:
                 std::vector<cv::linemod::Template> templates=detector->getTemplates(it->class_id, it->template_id);
                 drawResponse(templates, 1, display,cv::Point(it->x,it->y), 2);
             }
-            imshow("display",display);
-            cv::waitKey (0);
 
             //Clustering based on Row Col Depth
             std::map<std::vector<int>, std::vector<linemod::Match> > map_match;
-            int vote_row_col_step=4;
+            int vote_row_col_step=clustering_step_;
             double vote_depth_step=renderer_radius_step;
             int voting_height_cells,voting_width_cells;
             rcd_voting(vote_row_col_step, vote_depth_step, matches,map_match, voting_height_cells, voting_width_cells);
@@ -327,11 +351,20 @@ public:
             cluster_filter(map_match,thresh);
 
             //Compute criteria for each cluster
+                //Output: Vecotor of ClusterData, each element of which contains index, score, flag of checking.
+            vector<ClusterData> cluster_data;
             t=cv::getTickCount ();
-            cluster_scoring(map_match,mat_rgb_crop,mat_depth_crop);
+            cluster_scoring(map_match,mat_depth_crop,cluster_data);
             t=(cv::getTickCount ()-t)/cv::getTickFrequency ();
             cout<<"Time consumed by scroing: "<<t<<endl;
             int p=0;
+
+            //Non-maxima suppression
+            nonMaximaSuppression(cluster_data,10,map_match);
+
+
+            imshow("display",display);
+            cv::waitKey (0);
 
         }
 
@@ -578,14 +611,16 @@ public:
              //Copy
          }
 
-         void cluster_scoring(std::map<std::vector<int>, std::vector<linemod::Match> >& map_match, Mat rgb_img, Mat depth_img)
-         {
-             //test for depth diff
+         void cluster_scoring(std::map<std::vector<int>, std::vector<linemod::Match> >& map_match,Mat& depth_img,std::vector<ClusterData>& cluster_data)
+         {             
              std::map<std::vector<int>, std::vector<linemod::Match> >::iterator it_map= map_match.begin();
              for(;it_map!=map_match.end();++it_map)
              {
                  //Perform depth difference computation and normal difference computation
-                 double score=depth_normal_diff_calc(it_map->second,depth_img);
+                 //double score=depth_normal_diff_calc(it_map->second,depth_img);
+                 //Options: similairy score computation
+                 double score=similarity_score_calc(it_map->second);
+                 cluster_data.push_back(ClusterData(it_map->first,score));
 
              }
          }
@@ -622,7 +657,7 @@ public:
              sum_depth_diff=sum_depth_diff/match_cluster.size();
              sum_normal_diff=sum_normal_diff/match_cluster.size();
              int p=0;
-
+             return (getClusterScore(sum_depth_diff,sum_normal_diff));
          }
 
          double depth_diff(Mat& depth_img,Mat& depth_template,cv::Mat& template_mask,cv::Rect& rect)
@@ -707,6 +742,79 @@ public:
             return sum;
 
          }
+
+         //Computer average similarity score for one cluster
+         double similarity_score_calc(std::vector<linemod::Match> match_cluster)
+         {
+             double sum_score=0.0;
+             int num=0;
+             std::vector<linemod::Match>::iterator it_match=match_cluster.begin();
+             for(;it_match!=match_cluster.end();++it_match)
+             {
+                 sum_score+=it_match->similarity;
+                 num++;
+             }
+             sum_score/=num;
+             return sum_score;
+         }
+
+         double getClusterScore(const double& depth_diff_score,const double& normal_diff_score)
+         {
+             //Simply add two scores
+             return(depth_diff_score+normal_diff_score);
+
+         }
+
+         void nonMaximaSuppression(vector<ClusterData>& cluster_data,const double& neighborSize, std::map<std::vector<int>, std::vector<linemod::Match> >& map_match)
+         {
+             vector<ClusterData> nms_cluster_data;
+             std::map<std::vector<int>, std::vector<linemod::Match> > nms_map_match;
+             vector<ClusterData>::iterator it1=cluster_data.begin();
+             for(;it1!=cluster_data.end();++it1)
+             {
+                 if(!it1->is_checked)
+                 {
+                     ClusterData* best_cluster=&(*it1);
+                     vector<ClusterData>::iterator it2=it1;
+                     it2++;
+                     //Look for local maxima
+                     for(;it2!=cluster_data.end();++it2)
+                     {
+                         if(!it2->is_checked)
+                         {
+
+                             double dist=sqrt((best_cluster->index[0]-it2->index[0]) * (best_cluster->index[0]-it2->index[0]) + (best_cluster->index[1]-it2->index[1]) * (best_cluster->index[1]-it2->index[1]));
+                             if(dist < neighborSize)
+                             {
+                                 it2->is_checked=true;
+                                 if(it2->score > best_cluster->score)
+                                 {
+                                     best_cluster=&(*it2);
+                                 }
+                             }
+                         }
+                     }
+                     nms_cluster_data.push_back(*best_cluster);
+                 }
+             }
+
+             cluster_data.clear();
+             cluster_data=nms_cluster_data;
+
+             it1=cluster_data.begin();
+             for(;it1!=cluster_data.end();++it1)
+             {
+                 std::map<std::vector<int>, std::vector<linemod::Match> >::iterator it2;
+                 it2=map_match.find(it1->index);
+                 nms_map_match.insert(*it2);
+                 it1->matches=it2->second;
+             }
+
+             map_match.clear();
+             map_match=nms_map_match;
+             int p=0;
+         }
+
 };
 
 int main(int argc,char** argv)
@@ -720,16 +828,18 @@ int main(int argc,char** argv)
     int icp_max_iter;
     float icp_tr_epsilon;
     float icp_fitness_th;
+    uchar clustering_step;
     if(argc<8)
     {
         linemod_template_path="/home/yake/catkin_ws/src/linemod_pose_est/config/data/pipe_linemod_ensenso_templates.yml";
         renderer_param_path="/home/yake/catkin_ws/src/linemod_pose_est/config/data/pipe_linemod_ensenso_renderer_params.yml";
         model_stl_path="/home/yake/catkin_ws/src/linemod_pose_est/config/stl/pipe_connector.stl";
-        detect_score_th=96.0;
+        detect_score_th=93.0;
         clustering_th=0.02;
         icp_max_iter=25;
         icp_tr_epsilon=0.0001;
         icp_fitness_th=0.0002;
+        clustering_step=4;
     }
     else
     {
@@ -743,14 +853,14 @@ int main(int argc,char** argv)
     icp_fitness_th=atof(argv[8]);
     }
     linemod_detect detector(linemod_template_path,renderer_param_path,model_stl_path,
-                            detect_score_th,clustering_th,icp_max_iter,icp_tr_epsilon,icp_fitness_th);
+                            detect_score_th,clustering_th,icp_max_iter,icp_tr_epsilon,icp_fitness_th,clustering_step);
 
     ensenso::RegistImage srv;
     srv.request.is_rgb=true;
     ros::Rate loop(1);
 
     ros::Time now =ros::Time::now();
-    Mat cv_img=imread("/home/yake/catkin_ws/src/ensenso/pcd/1481939332_rgb.jpg",IMREAD_COLOR);
+    Mat cv_img=imread("/home/yake/catkin_ws/src/ensenso/pcd/1481939424_rgb.jpg",IMREAD_COLOR);
     cv_bridge::CvImagePtr bridge_img_ptr(new cv_bridge::CvImage);
     bridge_img_ptr->image=cv_img;
     bridge_img_ptr->encoding="bgr8";
@@ -758,7 +868,7 @@ int main(int argc,char** argv)
     srv.response.image = *bridge_img_ptr->toImageMsg();
 
     PointCloudXYZ::Ptr pc(new PointCloudXYZ);
-    pcl::io::loadPCDFile("/home/yake/catkin_ws/src/ensenso/pcd/1481939332_pc.pcd",*pc);
+    pcl::io::loadPCDFile("/home/yake/catkin_ws/src/ensenso/pcd/1481939424_pc.pcd",*pc);
     pcl::toROSMsg(*pc,srv.response.pointcloud);
     srv.response.pointcloud.header.frame_id="/camera_link";
     srv.response.pointcloud.header.stamp=now;
