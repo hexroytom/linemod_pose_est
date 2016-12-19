@@ -53,6 +53,7 @@ static void writeLinemodTemplateParams(std::string fileName,
                                        std::vector<float>& distances,
                                        std::vector<float>& obj_origin_dists,
                                        std::vector<cv::Mat>& Ks,
+                                       std::vector<cv::Rect>& Rects,
                                        int& renderer_n_points,
                                        int& renderer_angle_step,
                                        double& renderer_radius_min,
@@ -81,6 +82,7 @@ static void writeLinemodTemplateParams(std::string fileName,
         fs<<"K"<<Ks[i];
         fs<<"D"<<distances[i];
         fs<<"Ori_dist"<<obj_origin_dists[i];
+        fs<<"Rect"<<Rects[i];
         fs<<"}";
     }
     //fs<<"K Intrinsic Matrix"<<cv::Mat(K_matrix);
@@ -198,6 +200,7 @@ int main(int argc,char** argv)
     cv::Matx33f K;
     std::vector<cv::Mat> Rs_;
     std::vector<cv::Mat> Ts_;
+    std::vector<cv::Rect> Rects_;
     std::vector<float> distances_;
     std::vector<float> Origin_dists_;
     std::vector<cv::Mat> Ks_;
@@ -255,6 +258,7 @@ int main(int argc,char** argv)
       Ts_.push_back(cv::Mat(T));
       distances_.push_back(distance);
       Ks_.push_back(cv::Mat(K));
+      Rects_.push_back(rect);
       Origin_dists_.push_back (obj_origin_dist);
 
       //Store depth image, mask and rect
@@ -274,6 +278,7 @@ int main(int argc,char** argv)
                                 distances_,
                                 Origin_dists_,
                                 Ks_,
+                                Rects_,
                                 renderer_n_points_,
                                 renderer_angle_step_,
                                 renderer_radius_min_,

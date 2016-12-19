@@ -93,6 +93,7 @@ struct ClusterData{
     vector<int> index;
     double score;
     bool is_checked;
+    Rect rect;
 
 };
 
@@ -159,6 +160,7 @@ public:
     vector<float> Distances_;
     vector<float> Obj_origin_dists;
     vector<Mat> Ks_;
+    vector<Rect> Rects_;
     Mat K_depth;
     Matx33d K_rgb;
     Matx33f R_diag;
@@ -227,7 +229,7 @@ public:
 
             //read the poses of templates
             readLinemodTemplateParams (renderer_params_name,Rs_,Ts_,Distances_,Obj_origin_dists,
-                                       Ks_,renderer_n_points,renderer_angle_step,
+                                       Ks_,Rects_,renderer_n_points,renderer_angle_step,
                                        renderer_radius_min,renderer_radius_max,
                                        renderer_radius_step,renderer_width,renderer_height,
                                        renderer_focal_length_x,renderer_focal_length_y,
@@ -416,6 +418,7 @@ public:
                                         std::vector<float>& Distances,
                                         std::vector<float>& Obj_origin_dists,
                                         std::vector<cv::Mat>& Ks,
+                                        std::vector<cv::Rect>& Rects,
                                         int& renderer_n_points,
                                         int& renderer_angle_step,
                                         double& renderer_radius_min,
@@ -441,6 +444,7 @@ public:
                 if(!templates.empty ())
                 {
                     Mat R_tmp,T_tmp,K_tmp;
+                    Rect rect_tmp;
                     float D_tmp,obj_dist_tmp;
                     templates["R"]>>R_tmp;
                     Rs.push_back (R_tmp);
@@ -452,6 +456,8 @@ public:
                     Distances.push_back (D_tmp);
                     templates["Ori_dist"] >>obj_dist_tmp;
                     Obj_origin_dists.push_back (obj_dist_tmp);
+                    templates["Rect"]>>rect_tmp;
+                    Rects.push_back(rect_tmp);
 
                 }
                 else
@@ -801,6 +807,7 @@ public:
              cluster_data.clear();
              cluster_data=nms_cluster_data;
 
+             //Add matches to cluster data
              it1=cluster_data.begin();
              for(;it1!=cluster_data.end();++it1)
              {
@@ -808,6 +815,31 @@ public:
                  it2=map_match.find(it1->index);
                  nms_map_match.insert(*it2);
                  it1->matches=it2->second;
+             }
+
+             //Compute bounding box for each cluster
+             it1=cluster_data.begin();
+             for(;it1!=cluster_data.end();++it1)
+             {
+                 int num=0;
+                 int X=0; int Y=0; int WIDTH=0; int HEIGHT=0;
+                 std::vector<linemod::Match>::iterator it2=it1->matches.begin();
+                 for(;it2!=it1->matches.end();++it2)
+                 {
+                     Rect tmp=Rects_[it2->template_id];
+                     X+=it2->x;
+                     Y+=it2->y;
+                     WIDTH+=tmp.width;
+                     HEIGHT+=tmp.height;
+                     num++;
+                 }
+                 X/=num;
+                 Y/=num;
+                 WIDTH/=WIDTH/num;
+                 HEIGHT/=HEIGHT/num;
+
+                 it1->rect=Rect(X,Y,WIDTH,HEIGHT);
+
              }
 
              map_match.clear();
