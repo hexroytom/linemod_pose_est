@@ -50,8 +50,8 @@ static void writeLinemod(const cv::Ptr<cv::linemod::Detector>& detector, const s
 static void writeLinemodTemplateParams(std::string fileName,
                                        std::vector<cv::Mat>& Rs,
                                        std::vector<cv::Mat>& Ts,
-                                       std::vector<float>& distances,
-                                       std::vector<float>& obj_origin_dists,
+                                       std::vector<double>& distances,
+                                       std::vector<double>& obj_origin_dists,
                                        std::vector<cv::Mat>& Ks,
                                        std::vector<cv::Rect>& Rects,
                                        int& renderer_n_points,
@@ -201,8 +201,8 @@ int main(int argc,char** argv)
     std::vector<cv::Mat> Rs_;
     std::vector<cv::Mat> Ts_;
     std::vector<cv::Rect> Rects_;
-    std::vector<float> distances_;
-    std::vector<float> Origin_dists_;
+    std::vector<double> distances_;
+    std::vector<double> Origin_dists_;
     std::vector<cv::Mat> Ks_;
     std::vector<cv::Mat> depth_img;
     std::vector<cv::Mat> masks;
@@ -221,8 +221,8 @@ int main(int argc,char** argv)
       R = renderer_iterator.R_obj();
       T = renderer_iterator.T();
       //D_obj distance from camera to object origin
-      float distance = renderer_iterator.D_obj() - float(depth.at<ushort>(depth.rows/2.0f, depth.cols/2.0f)/1000.0f);
-      float obj_origin_dist=renderer_iterator.D_obj();
+      double distance = (double)renderer_iterator.D_obj() - double(depth.at<ushort>(depth.rows/2.0f, depth.cols/2.0f)/1000.0f);
+      double obj_origin_dist=(double)renderer_iterator.D_obj();
       K = cv::Matx33f(float(renderer_focal_length_x_), 0.0f, float(rect.width)/2.0f, 0.0f, float(renderer_focal_length_y_), float(rect.height)/2.0f, 0.0f, 0.0f, 1.0f);
 
       std::vector<cv::Mat> sources(1);

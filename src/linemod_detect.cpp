@@ -128,8 +128,8 @@ public:
     cv::Vec3f T_ref;
 
     vector<Mat> Rs_,Ts_;
-    vector<float> Distances_;
-    vector<float> Obj_origin_dists;
+    vector<double> Distances_;
+    vector<double> Obj_origin_dists;
     vector<Mat> Ks_;
     Mat K_depth;
     Matx33f R_diag;
@@ -410,11 +410,11 @@ public:
                  std::map<vector<int>,vector<match_xyz> > xyz_accumulator;
                  for(std::vector<linemod::Match>::iterator it2= it1->second.begin();it2 != it1->second.end();it2++)
                  {
-                     cv::Vec3f template_center=depth_real_ref_raw.at<cv::Vec3f>(it2->y,it2->x);
+                     cv::Vec3d template_center=depth_real_ref_raw.at<cv::Vec3d>(it2->y,it2->x);
                      //If it is a nan point, continue
                      if(!cv::checkRange(template_center))
                          continue;
-                     cv::Vec3f obj_center=template_center+cv::Vec3f(0,0,Distances_[it2->template_id]);
+                     cv::Vec3d obj_center=template_center+cv::Vec3d(0,0,Distances_[it2->template_id]);
                      vector<int> index(3);
                      for(int i=0;i<3;++i)
                         index[i]=obj_center[i]/xyz_voting_step;
@@ -530,7 +530,7 @@ public:
                  cv::Matx33d R_match = Rs_[match.template_id].clone();// rotation of the object w.r.t to the view point
                  cv::Vec3d T_match = Ts_[match.template_id].clone();//the translation of the camera with respect to the current view point
                  cv::Mat K_matrix= Ks_[match.template_id].clone();
-                 float D_match = Distances_[match.template_id];//the distance from the center of object surface to the camera origin
+                 double D_match = Distances_[match.template_id];//the distance from the center of object surface to the camera origin
 
                  //get the point cloud of the rendered object model
                  cv::Mat mask;
@@ -999,8 +999,8 @@ public:
          void readLinemodTemplateParams(const std::string fileName,
                                         std::vector<cv::Mat>& Rs,
                                         std::vector<cv::Mat>& Ts,
-                                        std::vector<float>& Distances,
-                                        std::vector<float>& Obj_origin_dists,
+                                        std::vector<double>& Distances,
+                                        std::vector<double>& Obj_origin_dists,
                                         std::vector<cv::Mat>& Ks,
                                         int& renderer_n_points,
                                         int& renderer_angle_step,

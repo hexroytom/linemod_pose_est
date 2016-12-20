@@ -22,8 +22,12 @@
 //#include <object_recognition_core/common/pose_result.h>
 //#include <object_recognition_core/db/ModelReader.h>
 
+//Eigen
+#include <Eigen/Dense>
+
 //opencv
 #include <opencv2/core/core.hpp>
+#include <opencv2/core/eigen.hpp>
 #include <opencv2/highgui/highgui.hpp>
 #include <opencv2/imgproc/imgproc.hpp>
 #include <opencv2/rgbd/rgbd.hpp>
@@ -79,12 +83,14 @@ struct ClusterData{
     {
         index.resize(3);
         is_checked=false;
+        dist=0.0;
     }
 
     ClusterData(const vector<int> index_,double score_):
         index(index_),
         score(score_),
-        is_checked(false)
+        is_checked(false),
+        dist(0.0)
     {
 
     }
@@ -94,6 +100,9 @@ struct ClusterData{
     double score;
     bool is_checked;
     Rect rect;
+    Eigen::Translation3d translation;
+    Eigen::Quaterniond rotation;
+    double dist;
 
 };
 
@@ -157,8 +166,8 @@ public:
     cv::Vec3f T_ref;
 
     vector<Mat> Rs_,Ts_;
-    vector<float> Distances_;
-    vector<float> Obj_origin_dists;
+    vector<double> Distances_;
+    vector<double> Obj_origin_dists;
     vector<Mat> Ks_;
     vector<Rect> Rects_;
     Mat K_depth;
@@ -336,10 +345,10 @@ public:
             t=(cv::getTickCount ()-t)/cv::getTickFrequency ();
 
             //Display all the results
-            for(std::vector<linemod::Match>::iterator it= matches.begin();it != matches.end();it++){
-                std::vector<cv::linemod::Template> templates=detector->getTemplates(it->class_id, it->template_id);
-                drawResponse(templates, 1, display,cv::Point(it->x,it->y), 2);
-            }
+//            for(std::vector<linemod::Match>::iterator it= matches.begin();it != matches.end();it++){
+//                std::vector<cv::linemod::Template> templates=detector->getTemplates(it->class_id, it->template_id);
+//                drawResponse(templates, 1, display,cv::Point(it->x,it->y), 2);
+//            }
 
             //Clustering based on Row Col Depth
             std::map<std::vector<int>, std::vector<linemod::Match> > map_match;
@@ -364,6 +373,13 @@ public:
             //Non-maxima suppression
             nonMaximaSuppression(cluster_data,10,map_match);
 
+            //Pose average
+            getRoughTransform(cluster_data);
+
+            for(int ii=0;ii<cluster_data.size();++ii)
+            {
+                rectangle(display,cluster_data[ii].rect,Scalar(0,0,255));
+            }
 
             imshow("display",display);
             cv::waitKey (0);
@@ -415,8 +431,8 @@ public:
          void readLinemodTemplateParams(const std::string fileName,
                                         std::vector<cv::Mat>& Rs,
                                         std::vector<cv::Mat>& Ts,
-                                        std::vector<float>& Distances,
-                                        std::vector<float>& Obj_origin_dists,
+                                        std::vector<double>& Distances,
+                                        std::vector<double>& Obj_origin_dists,
                                         std::vector<cv::Mat>& Ks,
                                         std::vector<cv::Rect>& Rects,
                                         int& renderer_n_points,
@@ -821,7 +837,6 @@ public:
              it1=cluster_data.begin();
              for(;it1!=cluster_data.end();++it1)
              {
-                 int num=0;
                  int X=0; int Y=0; int WIDTH=0; int HEIGHT=0;
                  std::vector<linemod::Match>::iterator it2=it1->matches.begin();
                  for(;it2!=it1->matches.end();++it2)
@@ -831,12 +846,11 @@ public:
                      Y+=it2->y;
                      WIDTH+=tmp.width;
                      HEIGHT+=tmp.height;
-                     num++;
                  }
-                 X/=num;
-                 Y/=num;
-                 WIDTH/=WIDTH/num;
-                 HEIGHT/=HEIGHT/num;
+                 X/=it1->matches.size();
+                 Y/=it1->matches.size();
+                 WIDTH/=it1->matches.size();
+                 HEIGHT/=it1->matches.size();
 
                  it1->rect=Rect(X,Y,WIDTH,HEIGHT);
 
@@ -845,6 +859,46 @@ public:
              map_match.clear();
              map_match=nms_map_match;
              int p=0;
+         }
+
+         //get rough pose by averaging poses
+         void getRoughTransform(vector<ClusterData>& cluster_data)
+         {
+             //For each cluster
+             for(vector<ClusterData>::iterator it = cluster_data.begin();it!=cluster_data.end();++it)
+             {
+                 //For each match
+                 Eigen::Vector3d T_average(0.0,0.0,0.0);
+                 Eigen::Vector4d R_average(0.0,0.0,0.0,0.0);
+                 double D_average=0.0;
+                 for(vector<linemod::Match>::iterator it2=it->matches.begin();it2!=it->matches.end();++it2)
+                 {
+                     //Get translation
+                     Mat T_mat=Ts_[it2->template_id];
+                     Eigen::Matrix<double,3,1> T;
+                     cv2eigen(T_mat,T);
+                     T_average+=T;
+                     //Get rotation
+                     Mat R_mat=Rs_[it2->template_id];
+                     Eigen::Matrix<double,3,3> R;
+                     cv2eigen(R_mat,R);
+                     Eigen::Quaterniond Q(R);
+                     R_average+=Eigen::Quaterniond(R).coeffs();
+                     //Get distance from match surface center to object center
+                     D_average+=Distances_[it2->template_id];
+
+                 }
+                 T_average/=it->matches.size();
+                 R_average/=it->matches.size();
+                 D_average/=it->matches.size();
+
+                 it->translation=Eigen::Translation3d(T_average);
+                 it->rotation=Eigen::Quaterniond(R_average).normalized();
+                 it->dist=D_average;
+             }
+
+             int p=0;
+
          }
 
 };
@@ -892,7 +946,7 @@ int main(int argc,char** argv)
     ros::Rate loop(1);
 
     ros::Time now =ros::Time::now();
-    Mat cv_img=imread("/home/yake/catkin_ws/src/ensenso/pcd/1481939424_rgb.jpg",IMREAD_COLOR);
+    Mat cv_img=imread("/home/yake/catkin_ws/src/ensenso/pcd/1481939394_rgb.jpg",IMREAD_COLOR);
     cv_bridge::CvImagePtr bridge_img_ptr(new cv_bridge::CvImage);
     bridge_img_ptr->image=cv_img;
     bridge_img_ptr->encoding="bgr8";
@@ -900,7 +954,7 @@ int main(int argc,char** argv)
     srv.response.image = *bridge_img_ptr->toImageMsg();
 
     PointCloudXYZ::Ptr pc(new PointCloudXYZ);
-    pcl::io::loadPCDFile("/home/yake/catkin_ws/src/ensenso/pcd/1481939424_pc.pcd",*pc);
+    pcl::io::loadPCDFile("/home/yake/catkin_ws/src/ensenso/pcd/1481939394_pc.pcd",*pc);
     pcl::toROSMsg(*pc,srv.response.pointcloud);
     srv.response.pointcloud.header.frame_id="/camera_link";
     srv.response.pointcloud.header.stamp=now;
