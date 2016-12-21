@@ -81,18 +81,21 @@ using namespace std;
 //Score based on evaluation for 1 cluster
 struct ClusterData{
 
-    ClusterData()
+    ClusterData():
+        model_pc(new PointCloudXYZ)
     {
         index.resize(3);
         is_checked=false;
         dist=0.0;
+
     }
 
     ClusterData(const vector<int> index_,double score_):
         index(index_),
         score(score_),
         is_checked(false),
-        dist(0.0)
+        dist(0.0),
+        model_pc(new PointCloudXYZ)
     {
 
     }
@@ -103,9 +106,11 @@ struct ClusterData{
     bool is_checked;
     Rect rect;
     cv::Matx33d orientation;
+    cv::Vec3d position;
     cv::Vec3d T_match;
     cv::Mat K_matrix;
     double dist;
+    PointCloudXYZ::Ptr model_pc;
 
 };
 
@@ -387,12 +392,22 @@ public:
             nonMaximaSuppression(cluster_data,10,map_match);
 
             //Pose average
+            t=cv::getTickCount ();
             getRoughPoseByClustering(cluster_data,pc_ptr);
+            t=(cv::getTickCount ()-t)/cv::getTickFrequency ();
+            cout<<"Time consumed by pose clustering: "<<t<<endl;
 
             //Display all the bounding box
             for(int ii=0;ii<cluster_data.size();++ii)
             {
                 rectangle(display,cluster_data[ii].rect,Scalar(0,0,255));
+            }
+
+            for(int ii=0;ii<cluster_data.size();++ii)
+            {
+                pcl::visualization::PCLVisualizer v("view");
+                v.addPointCloud<pcl::PointXYZ>(cluster_data[ii].model_pc);
+                v.spin();
             }
 
             imshow("display",display);
@@ -1019,23 +1034,27 @@ public:
                 //Test average all poses in 1st cluster
                  Eigen::Vector3d T_aver(0.0,0.0,0.0);
                  Eigen::Vector4d R_aver(0.0,0.0,0.0,0.0);
+                 double D_aver=0.0;
                  vector<Eigen::Matrix3d>::iterator iter=orienClusters[0].begin();
                  for(int i=0;iter!=orienClusters[0].end();++iter,++i)
                  {
                      //get rotation
-                        //Matrix33d ---> Quaternion
+                        //Matrix33d ---> Quaternion ---> Vector4d
                      R_aver+=Eigen::Quaterniond(*iter).coeffs();
                      //get translation
                      Mat T_mat=Ts_[idClusters[0][i]];
                      Eigen::Matrix<double,3,1> T;
                      cv2eigen(T_mat,T);
                      T_aver+=T;
+                     //Get distance
+                     D_aver+=Distances_[idClusters[0][i]];
 
                  }
-
+                //Averaging operation
                  R_aver/=orienClusters[0].size();
                  T_aver/=orienClusters[0].size();
-
+                 D_aver/=orienClusters[0].size();
+                //normalize the averaged quaternion
                  Eigen::Quaterniond quat=Eigen::Quaterniond(R_aver).normalized();
                  cv::Mat R_mat;
                  Eigen::Matrix3d R_eig;
@@ -1047,22 +1066,59 @@ public:
                  cv::Matx33d R_match(R_mat);
                  cv::Matx33d R_temp(R_match.inv());//rotation of the viewpoint w.r.t the object
                  cv::Vec3d up(-R_temp(0,1), -R_temp(1,1), -R_temp(2,1));//the negative direction of y axis of viewpoint w.r.t object frame
-                 cv::Mat depth_ref_;
+                 cv::Mat depth_render;
                  cv::Vec3d T_match;
                  T_match[0]=T_aver[0];
                  T_match[1]=T_aver[1];
                  T_match[2]=T_aver[2];
-                 renderer_iterator_->renderDepthOnly(depth_ref_, mask, rect, -T_match, up);
-                 //imshow("mask",mask);
-                 //waitKey(0);
+                 renderer_iterator_->renderDepthOnly(depth_render, mask, rect, -T_match, up);
+//                 imshow("mask",mask);
+//                 waitKey(0);
 
                  //Save orientation, T_match and K_matrix
                  it->orientation=R_match;
                  it->T_match=T_match;
+                 it->dist=D_aver;
                  it->K_matrix=(Mat_<double>(3,3)<<renderer_focal_length_x,0.0,rect.width/2,
                                                0.0,renderer_focal_length_y,rect.height/2,
                                                0.0,0.0,1.0);
-                cout<<it->K_matrix<<endl;
+                 //Save position
+                 int x=it->rect.x+it->rect.width/2;
+                 int y=it->rect.y+it->rect.height/2;
+                 //Add offset to x due to previous cropping operation
+                 x+=56;
+                 pcl::PointXYZ pt = pc->at(x,y);
+                    //Notice
+                 pt.z+=D_aver;
+                 it->position=cv::Vec3d(pt.x,pt.y,pt.z);
+
+//                 //Get render point cloud
+                 Mat pc_cv;
+                 cv::depthTo3d(depth_render,it->K_matrix,pc_cv);    //mm ---> m
+
+
+                 pcl::PointCloud<pcl::PointXYZ> pts;
+                 it->model_pc->width=pc_cv.cols;
+                 it->model_pc->height=pc_cv.rows;
+                 it->model_pc->resize(pc_cv.cols*pc_cv.rows);
+                 it->model_pc->header.frame_id="/camera_link";
+
+                 for(int ii=0;ii<pc_cv.rows;++ii)
+                 {
+                     double* row_ptr=pc_cv.ptr<double>(ii);
+                     for(int jj=0;jj<pc_cv.cols;++jj)
+                     {
+                            double* data =row_ptr+jj*3;
+                            //cout<<" "<<data[0]<<" "<<data[1]<<" "<<data[2]<<endl;
+                            it->model_pc->at(jj,ii).x=data[0];
+                            it->model_pc->at(jj,ii).y=data[1];
+                            it->model_pc->at(jj,ii).z=data[2];
+                     }
+                 }
+
+                 //Transform the pc
+                    //...
+
                 int p=0;
              }
          }
