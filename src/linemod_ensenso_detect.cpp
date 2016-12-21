@@ -102,8 +102,9 @@ struct ClusterData{
     double score;
     bool is_checked;
     Rect rect;
-    Eigen::Translation3d translation;
-    Eigen::Quaterniond rotation;
+    cv::Matx33d orientation;
+    cv::Vec3d T_match;
+    cv::Mat K_matrix;
     double dist;
 
 };
@@ -143,6 +144,11 @@ struct LinemodData{
 };
 
 bool sortOrienCluster(const vector<Eigen::Matrix3d>& cluster1,const vector<Eigen::Matrix3d>& cluster2)
+{
+    return(cluster1.size()>cluster2.size());
+}
+
+bool sortIdCluster(const vector<int>& cluster1,const vector<int>& cluster2)
 {
     return(cluster1.size()>cluster2.size());
 }
@@ -869,120 +875,197 @@ public:
              int p=0;
          }
 
-         //get rough pose by pose clustering
-         void getRoughPoseByPoseAver(vector<ClusterData>& cluster_data,PointCloudXYZ::Ptr pc)
+         //get rough pose by pose averaging
+//         void getRoughPoseByPoseAver(vector<ClusterData>& cluster_data,PointCloudXYZ::Ptr pc)
+//         {
+//             //For each cluster
+//             for(vector<ClusterData>::iterator it = cluster_data.begin();it!=cluster_data.end();++it)
+//             {
+//                 //For each match
+//                 Eigen::Vector3d T_average(0.0,0.0,0.0);
+//                 Eigen::Vector4d R_average(0.0,0.0,0.0,0.0);
+//                 double D_average=0.0;
+
+//                 for(vector<linemod::Match>::iterator it2=it->matches.begin();it2!=it->matches.end();++it2)
+//                 {
+//                     //Get translation
+//                     Mat T_mat=Ts_[it2->template_id];
+//                     Eigen::Matrix<double,3,1> T;
+//                     cv2eigen(T_mat,T);
+//                     T_average+=T;
+
+//                     //Get rotation
+//                     Mat R_mat=Rs_[it2->template_id];
+//                     Eigen::Matrix<double,3,3> R;
+//                     cv2eigen(R_mat,R);
+//                     R_average+=Eigen::Quaterniond(R).coeffs();
+
+//                     //Get distance from match surface center to object center
+//                     D_average+=Distances_[it2->template_id];
+//                 }
+
+//                 //Averaging
+//                 T_average/=it->matches.size();
+//                 R_average/=it->matches.size();
+//                 D_average/=it->matches.size();
+
+//                 //Don't forget to normalize quaternion
+//                    //Ref: "On Averaging Rotations" by CLAUS GRAMKOW
+//                 it->rotation=Eigen::Quaterniond(R_average).normalized();
+//                 it->dist=D_average;
+
+//                 //Update translation
+//                 int x=it->rect.x+it->rect.width/2;
+//                 int y=it->rect.y+it->rect.height/2;
+//                    //Add offset to x due to previous cropping operation
+//                 x+=56;
+//                 pcl::PointXYZ pt = pc->at(x,y);
+//                    //Notice
+//                 pt.z+=D_average;
+//                 it->translation=Eigen::Translation3d(pt.x,pt.y,pt.z);
+
+//                 //Render pointcloud and update its position
+//                    //Render
+//                 cv::Mat R_mat;
+//                 Eigen::Matrix3d R_eig;
+//                 R_eig=it->rotation.toRotationMatrix();
+//                 eigen2cv(R_eig,R_mat);
+//                 cv::Vec3d T_match;//the translation of the camera with respect to the current view point
+//                 T_match[0]=T_average[0];
+//                 T_match[1]=T_average[1];
+//                 T_match[2]=T_average[2];
+//                 cv::Mat K_matrix= Ks_[it->matches[0].template_id].clone();
+//                 //get the point cloud of the rendered object model
+//                 cv::Mat mask;
+//                 cv::Rect rect;
+//                 cv::Matx33d R_match(R_mat);
+//                 cv::Matx33d R_temp(R_match.inv());//rotation of the viewpoint w.r.t the object
+//                 cv::Vec3d up(-R_temp(0,1), -R_temp(1,1), -R_temp(2,1));//the negative direction of y axis of viewpoint w.r.t object frame
+//                 cv::Mat depth_ref_;
+//                 renderer_iterator_->renderDepthOnly(depth_ref_, mask, rect, -T_match, up);
+//                 imshow("depth",mask);
+//                 waitKey(0);
+
+//             }
+
+//         }
+
+         //get rough pose by clustering
+         void getRoughPoseByClustering(vector<ClusterData>& cluster_data,PointCloudXYZ::Ptr pc)
          {
              //For each cluster
              for(vector<ClusterData>::iterator it = cluster_data.begin();it!=cluster_data.end();++it)
              {
-                 //For each match
-                 Eigen::Vector3d T_average(0.0,0.0,0.0);
-                 Eigen::Vector4d R_average(0.0,0.0,0.0,0.0);
-                 double D_average=0.0;
-
+                 //Perform clustering
+                 vector<vector<Eigen::Matrix3d> > orienClusters;
+                 vector<vector<int> > idClusters;
                  for(vector<linemod::Match>::iterator it2=it->matches.begin();it2!=it->matches.end();++it2)
                  {
-                     //Get translation
-                     Mat T_mat=Ts_[it2->template_id];
-                     Eigen::Matrix<double,3,1> T;
-                     cv2eigen(T_mat,T);
-                     T_average+=T;
-
                      //Get rotation
                      Mat R_mat=Rs_[it2->template_id];
                      Eigen::Matrix<double,3,3> R;
                      cv2eigen(R_mat,R);
-                     R_average+=Eigen::Quaterniond(R).coeffs();
 
-                     //Get distance from match surface center to object center
-                     D_average+=Distances_[it2->template_id];
+                     bool found_cluster=false;
+
+                     //Compare current orientation with existing cluster
+                     for(int i=0;i<orienClusters.size();++i)
+                     {
+                         if(orientationCompare(R,orienClusters[i].front(),25.0))
+                         {
+                             found_cluster=true;
+                             orienClusters[i].push_back(R);
+                             idClusters[i].push_back(it2->template_id);
+                             break;
+                         }
+                     }
+
+                     //If current orientation is not assigned to any cluster, create a new one for it.
+                     if(found_cluster == false)
+                     {
+                         vector<Eigen::Matrix3d> new_cluster;
+                         new_cluster.push_back(R);
+                         orienClusters.push_back(new_cluster);
+
+                         vector<int> new_cluster_;
+                         new_cluster_.push_back(it2->template_id);
+                         idClusters.push_back(new_cluster_);
+                     }
+                 }
+                 //Sort cluster according to the number of poses
+                 std::sort(orienClusters.begin(),orienClusters.end(),sortOrienCluster);
+                 std::sort(idClusters.begin(),idClusters.end(),sortIdCluster);
+
+                 //Test display all the poses in 1st cluster
+//                 for(int i=0;i<idClusters[0].size();++i)
+//                 {
+//                     int ID=idClusters[0][i];
+
+//                     //get the pose
+//                     cv::Matx33d R_match = Rs_[ID].clone();// rotation of the object w.r.t to the view point
+//                     cv::Vec3d T_match = Ts_[ID].clone();//the translation of the camera with respect to the current view point
+//                     cv::Mat K_matrix= Ks_[ID].clone();
+//                     cv::Mat mask;
+//                     cv::Rect rect;
+//                     cv::Matx33d R_temp(R_match.inv());//rotation of the viewpoint w.r.t the object
+//                     cv::Vec3d up(-R_temp(0,1), -R_temp(1,1), -R_temp(2,1));//the negative direction of y axis of viewpoint w.r.t object frame
+//                     cv::Mat depth_ref_;
+//                     renderer_iterator_->renderDepthOnly(depth_ref_, mask, rect, -T_match, up);
+//                     imshow("mask",mask);
+//                     waitKey(0);
+
+//                 }
+
+                //Test average all poses in 1st cluster
+                 Eigen::Vector3d T_aver(0.0,0.0,0.0);
+                 Eigen::Vector4d R_aver(0.0,0.0,0.0,0.0);
+                 vector<Eigen::Matrix3d>::iterator iter=orienClusters[0].begin();
+                 for(int i=0;iter!=orienClusters[0].end();++iter,++i)
+                 {
+                     //get rotation
+                        //Matrix33d ---> Quaternion
+                     R_aver+=Eigen::Quaterniond(*iter).coeffs();
+                     //get translation
+                     Mat T_mat=Ts_[idClusters[0][i]];
+                     Eigen::Matrix<double,3,1> T;
+                     cv2eigen(T_mat,T);
+                     T_aver+=T;
+
                  }
 
-                 //Averaging
-                 T_average/=it->matches.size();
-                 R_average/=it->matches.size();
-                 D_average/=it->matches.size();
+                 R_aver/=orienClusters[0].size();
+                 T_aver/=orienClusters[0].size();
 
-                 //Don't forget to normalize quaternion
-                    //Ref: "On Averaging Rotations" by CLAUS GRAMKOW                 
-                 it->rotation=Eigen::Quaterniond(R_average).normalized();
-                 it->dist=D_average;
-
-                 //Update translation
-                 int x=it->rect.x+it->rect.width/2;
-                 int y=it->rect.y+it->rect.height/2;
-                    //Add offset to x due to previous cropping operation
-                 x+=56;
-                 pcl::PointXYZ pt = pc->at(x,y);
-                    //Notice
-                 pt.z+=D_average;
-                 it->translation=Eigen::Translation3d(pt.x,pt.y,pt.z);
-
-                 //Render pointcloud and update its position
-                    //Render
+                 Eigen::Quaterniond quat=Eigen::Quaterniond(R_aver).normalized();
                  cv::Mat R_mat;
                  Eigen::Matrix3d R_eig;
-                 R_eig=it->rotation.toRotationMatrix();
+                 R_eig=quat.toRotationMatrix();
                  eigen2cv(R_eig,R_mat);
-                 cv::Vec3d T_match;//the translation of the camera with respect to the current view point
-                 T_match[0]=T_average[0];
-                 T_match[1]=T_average[1];
-                 T_match[2]=T_average[2];
-                 cv::Mat K_matrix= Ks_[it->matches[0].template_id].clone();
-                 //get the point cloud of the rendered object model
+
                  cv::Mat mask;
                  cv::Rect rect;
                  cv::Matx33d R_match(R_mat);
                  cv::Matx33d R_temp(R_match.inv());//rotation of the viewpoint w.r.t the object
                  cv::Vec3d up(-R_temp(0,1), -R_temp(1,1), -R_temp(2,1));//the negative direction of y axis of viewpoint w.r.t object frame
                  cv::Mat depth_ref_;
+                 cv::Vec3d T_match;
+                 T_match[0]=T_aver[0];
+                 T_match[1]=T_aver[1];
+                 T_match[2]=T_aver[2];
                  renderer_iterator_->renderDepthOnly(depth_ref_, mask, rect, -T_match, up);
-                 imshow("depth",mask);
-                 waitKey(0);
+                 //imshow("mask",mask);
+                 //waitKey(0);
 
-             }
-
-         }
-        void getRoughPoseByClustering(vector<ClusterData>& cluster_data,PointCloudXYZ::Ptr pc)
-        {
-            //For each cluster
-            for(vector<ClusterData>::iterator it = cluster_data.begin();it!=cluster_data.end();++it)
-            {
-                //Perform clustering
-                vector<vector<Eigen::Matrix3d> > orienClusters;
-                for(vector<linemod::Match>::iterator it2=it->matches.begin();it2!=it->matches.end();++it2)
-                {
-                    //Get rotation
-                    Mat R_mat=Rs_[it2->template_id];
-                    Eigen::Matrix<double,3,3> R;
-                    cv2eigen(R_mat,R);
-
-                    bool found_cluster=false;
-
-                    //Compare current orientation with existing cluster
-                    for(int i=0;i<orienClusters.size();++i)
-                    {
-                        if(orientationCompare(R,orienClusters[i].front(),25.0))
-                        {
-                            found_cluster=true;
-                            orienClusters[i].push_back(R);
-                            break;
-                        }
-                    }
-
-                    //If current orientation is not assigned to any cluster, create a new one for it.
-                    if(found_cluster == false)
-                    {
-                        vector<Eigen::Matrix3d> new_cluster;
-                        new_cluster.push_back(R);
-                        orienClusters.push_back(new_cluster);
-                    }
-                }
-
-                std::sort(orienClusters.begin(),orienClusters.end(),sortOrienCluster);
+                 //Save orientation, T_match and K_matrix
+                 it->orientation=R_match;
+                 it->T_match=T_match;
+                 it->K_matrix=(Mat_<double>(3,3)<<renderer_focal_length_x,0.0,rect.width/2,
+                                               0.0,renderer_focal_length_y,rect.height/2,
+                                               0.0,0.0,1.0);
+                cout<<it->K_matrix<<endl;
                 int p=0;
-            }
-        }
+             }
+         }
 
         bool orientationCompare(Eigen::Matrix3d& orien1,Eigen::Matrix3d& orien2,double thresh)
         {
