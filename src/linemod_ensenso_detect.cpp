@@ -397,6 +397,13 @@ public:
             t=(cv::getTickCount ()-t)/cv::getTickFrequency ();
             cout<<"Time consumed by pose clustering: "<<t<<endl;
 
+            //Pose refinement
+            t=cv::getTickCount ();
+            icpPoseRefine(cluster_data,pc_ptr);
+            t=(cv::getTickCount ()-t)/cv::getTickFrequency ();
+            cout<<"Time consumed by pose refinement: "<<t<<endl;
+
+            //Viz in point cloud
             vizResultPclViewer(cluster_data,pc_ptr);
 
             //Display all the bounding box
@@ -407,6 +414,9 @@ public:
 
             imshow("display",display);
             cv::waitKey (0);
+
+
+
 
         }
 
@@ -1104,10 +1114,11 @@ public:
                      for(int jj=0;jj<pc_cv.cols;++jj)
                      {
                             double* data =row_ptr+jj*3;
-                            //cout<<" "<<data[0]<<" "<<data[1]<<" "<<data[2]<<endl;
+                            //cout<<" "<<data[0]<<" "<<data[1]<<" "<<data[2]<<endl;                            
                             it->model_pc->at(jj,ii).x=data[0];
                             it->model_pc->at(jj,ii).y=data[1];
                             it->model_pc->at(jj,ii).z=data[2];
+
                      }
                  }
 
@@ -1122,9 +1133,28 @@ public:
                  pcl::transformPointCloud(*it->model_pc,*transformed_cloud,transform);
 
                  it->model_pc.swap(transformed_cloud);
+             }
+         }
+
+         void icpPoseRefine(vector<ClusterData>& cluster_data,PointCloudXYZ::Ptr pc)
+         {
+             for(vector<ClusterData>::iterator it = cluster_data.begin();it!=cluster_data.end();++it)
+             {
+                //Get point cloud indices
+                 pcl::PointIndices::Ptr indices(new pcl::PointIndices);
+                 indices=getPointCloudIndices(it->rect);
+                //Extract pc according to indices
+                 PointCloudXYZ::Ptr scene_pc(new PointCloudXYZ);
+                 extractPointsByIndices(indices,pc,scene_pc,false,false);
 
 
-                int p=0;
+                 vector<int> index;
+                 it->model_pc->is_dense=false;
+                 pcl::removeNaNFromPointCloud(*(it->model_pc),*(it->model_pc),index);
+                 pcl::removeNaNFromPointCloud(*scene_pc,*scene_pc,index);
+                 icp.setInputSource (it->model_pc);
+                 icp.setInputTarget (scene_pc);
+                 icp.align (*(it->model_pc));
              }
          }
 
@@ -1142,6 +1172,30 @@ public:
             {
                 return false;
             }
+
+        }
+
+        pcl::PointIndices::Ptr getPointCloudIndices(const cv::Rect& rect)
+        {
+            int row_offset=rect.y;
+            int col_offset=rect.x;
+            pcl::PointIndices::Ptr indices(new pcl::PointIndices);
+            for(int i=0;i<rect.height;++i)
+            {
+                for(int j=0;j<rect.width;++j)
+                {
+                    //Notice: the coordinate of input params "rect" is w.r.t cropped image, so the offset is needed to transform coordinate
+                    int x_cropped=j+col_offset;
+                    int y_cropped=i+row_offset;
+                    int x_uncropped=x_cropped+56;
+                    int y_uncropped=y_cropped;
+                    //Attention: image width of ensenso: 752, image height of ensenso: 480
+                    int index=y_uncropped*752+x_uncropped;
+                    indices->indices.push_back(index);
+
+                }
+            }
+            return indices;
 
         }
 
@@ -1212,7 +1266,7 @@ public:
                 obj_pose.translation()<<cluster_data[ii].position[0],cluster_data[ii].position[1],cluster_data[ii].position[2];
                 Eigen::Affine3f obj_pose_f=obj_pose.cast<float>();
                 //Eigen::Affine3f obj_pose_f=obj_pose;
-                view.addCoordinateSystem(0.05,obj_pose_f);
+                view.addCoordinateSystem(0.08,obj_pose_f);
             }
             view.spin();
         }
@@ -1239,8 +1293,8 @@ int main(int argc,char** argv)
         detect_score_th=93.0;
         clustering_th=0.02;
         icp_max_iter=25;
-        icp_tr_epsilon=0.0001;
-        icp_fitness_th=0.0002;
+        icp_tr_epsilon=0.001;
+        icp_fitness_th=0.002;
         clustering_step=4;
     }
     else
@@ -1262,7 +1316,7 @@ int main(int argc,char** argv)
     ros::Rate loop(1);
 
     ros::Time now =ros::Time::now();
-    Mat cv_img=imread("/home/yake/catkin_ws/src/ensenso/pcd/1481939424_rgb.jpg",IMREAD_COLOR);
+    Mat cv_img=imread("/home/yake/catkin_ws/src/ensenso/pcd/1481939332_rgb.jpg",IMREAD_COLOR);
     cv_bridge::CvImagePtr bridge_img_ptr(new cv_bridge::CvImage);
     bridge_img_ptr->image=cv_img;
     bridge_img_ptr->encoding="bgr8";
@@ -1270,7 +1324,7 @@ int main(int argc,char** argv)
     srv.response.image = *bridge_img_ptr->toImageMsg();
 
     PointCloudXYZ::Ptr pc(new PointCloudXYZ);
-    pcl::io::loadPCDFile("/home/yake/catkin_ws/src/ensenso/pcd/1481939424_pc.pcd",*pc);
+    pcl::io::loadPCDFile("/home/yake/catkin_ws/src/ensenso/pcd/1481939332_pc.pcd",*pc);
     pcl::toROSMsg(*pc,srv.response.pointcloud);
     srv.response.pointcloud.header.frame_id="/camera_link";
     srv.response.pointcloud.header.stamp=now;
