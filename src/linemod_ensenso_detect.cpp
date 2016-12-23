@@ -403,12 +403,19 @@ public:
                 rectangle(display,cluster_data[ii].rect,Scalar(0,0,255));
             }
 
+            pcl::visualization::PCLVisualizer view("v");
+            view.addPointCloud(pc_ptr,"scene");
             for(int ii=0;ii<cluster_data.size();++ii)
             {
-                pcl::visualization::PCLVisualizer v("view");
-                v.addPointCloud<pcl::PointXYZ>(cluster_data[ii].model_pc);
-                v.spin();
+                pcl::visualization::PointCloudColorHandlerRandom<pcl::PointXYZ> color(cluster_data[ii].model_pc);
+                string str="model ";
+                stringstream ss;
+                ss<<ii;
+                str+=ss.str();
+                view.addPointCloud(cluster_data[ii].model_pc,color,str);
+
             }
+            view.spin();
 
             imshow("display",display);
             cv::waitKey (0);
@@ -1087,7 +1094,7 @@ public:
                  int y=it->rect.y+it->rect.height/2;
                  //Add offset to x due to previous cropping operation
                  x+=56;
-                 pcl::PointXYZ pt = pc->at(x,y);
+                 pcl::PointXYZ pt =pc->at(x,y);
                     //Notice
                  pt.z+=D_aver;
                  it->position=cv::Vec3d(pt.x,pt.y,pt.z);
@@ -1116,8 +1123,18 @@ public:
                      }
                  }
 
-                 //Transform the pc
-                    //...
+                 //Transform the pc                 
+                 pcl::PointXYZ pt_scene =pc->at(x,y);
+                 pcl::PointXYZ pt_model=it->model_pc->at(it->model_pc->width/2,it->model_pc->height/2);
+                 pcl::PointXYZ translation(pt_scene.x -pt_model.x,pt_scene.y -pt_model.y,pt_scene.z -pt_model.z);
+                 Eigen::Affine3d transform =Eigen::Affine3d::Identity();
+                 transform.translation()<<translation.x, translation.y, translation.z;
+
+                 PointCloudXYZ::Ptr transformed_cloud (new PointCloudXYZ ());
+                 pcl::transformPointCloud(*it->model_pc,*transformed_cloud,transform);
+
+                 it->model_pc.swap(transformed_cloud);
+
 
                 int p=0;
              }
@@ -1138,6 +1155,52 @@ public:
                 return false;
             }
 
+        }
+
+        void projectPtsToImage()
+        {
+            //            //Project pose into image plane
+            //                //Define camera matrix
+            //            Mat k_mtx=(Mat_<double>(3,3)<<renderer_focal_length_x,0.0,640/2,
+            //                                          0.0,renderer_focal_length_y,480/2,
+            //                                          0.0,0.0,1.0);
+            //            cout<<k_mtx<<endl;
+            //                //Define distortion coefficients
+            //            vector<double> distCoeffs(5,0.0);
+            //            distCoeffs[0]=-0.0932546108961105347;
+            //                //Define points in object coordinate
+            //            vector<Point3d> pts(4);
+            //            pts[0]=Point3d(10.0,0.0,0.0);
+            //            pts[1]=Point3d(0.0,10.0,0.0);
+            //            pts[2]=Point3d(0.0,0.0,10.0);
+            //            pts[3]=Point3d(0.0,0.0,0.0);
+            //            for(int ii=0;ii<cluster_data.size();++ii)
+            //            {
+            //                //Get rodrigues representation
+            //                Matx31d rod;
+            //                Rodrigues(cluster_data[ii].orientation,rod);
+
+            //                //Output pts
+            //                vector<Point2d> image_pts;
+
+            //                //Translation vector
+            //                vector<double> trans(3);
+            //                trans[0]=cluster_data[ii].position[0]*1000;
+            //                trans[1]=cluster_data[ii].position[1]*1000;
+            //                trans[2]=cluster_data[ii].position[2]*1000;
+
+            //                projectPoints(pts,rod,trans,k_mtx,distCoeffs,image_pts);
+            //                for(int jj=0;jj<image_pts.size();++jj)
+            //                {
+            //                    Point pt_offset=Point(image_pts[jj].x,image_pts[jj].y);
+            //                    circle(display,pt_offset,3,Scalar(255,0,0),2);
+            //                 }
+            //                imshow("circle",display);
+            //                waitKey(0);
+
+            //                int p=0;
+
+            //            }
         }
 
 };
@@ -1185,7 +1248,7 @@ int main(int argc,char** argv)
     ros::Rate loop(1);
 
     ros::Time now =ros::Time::now();
-    Mat cv_img=imread("/home/yake/catkin_ws/src/ensenso/pcd/1481939394_rgb.jpg",IMREAD_COLOR);
+    Mat cv_img=imread("/home/yake/catkin_ws/src/ensenso/pcd/1481939332_rgb.jpg",IMREAD_COLOR);
     cv_bridge::CvImagePtr bridge_img_ptr(new cv_bridge::CvImage);
     bridge_img_ptr->image=cv_img;
     bridge_img_ptr->encoding="bgr8";
@@ -1193,7 +1256,7 @@ int main(int argc,char** argv)
     srv.response.image = *bridge_img_ptr->toImageMsg();
 
     PointCloudXYZ::Ptr pc(new PointCloudXYZ);
-    pcl::io::loadPCDFile("/home/yake/catkin_ws/src/ensenso/pcd/1481939394_pc.pcd",*pc);
+    pcl::io::loadPCDFile("/home/yake/catkin_ws/src/ensenso/pcd/1481939332_pc.pcd",*pc);
     pcl::toROSMsg(*pc,srv.response.pointcloud);
     srv.response.pointcloud.header.frame_id="/camera_link";
     srv.response.pointcloud.header.stamp=now;
