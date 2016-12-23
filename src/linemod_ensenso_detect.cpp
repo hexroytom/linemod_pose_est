@@ -397,25 +397,13 @@ public:
             t=(cv::getTickCount ()-t)/cv::getTickFrequency ();
             cout<<"Time consumed by pose clustering: "<<t<<endl;
 
+            vizResultPclViewer(cluster_data,pc_ptr);
+
             //Display all the bounding box
             for(int ii=0;ii<cluster_data.size();++ii)
             {
                 rectangle(display,cluster_data[ii].rect,Scalar(0,0,255));
             }
-
-            pcl::visualization::PCLVisualizer view("v");
-            view.addPointCloud(pc_ptr,"scene");
-            for(int ii=0;ii<cluster_data.size();++ii)
-            {
-                pcl::visualization::PointCloudColorHandlerRandom<pcl::PointXYZ> color(cluster_data[ii].model_pc);
-                string str="model ";
-                stringstream ss;
-                ss<<ii;
-                str+=ss.str();
-                view.addPointCloud(cluster_data[ii].model_pc,color,str);
-
-            }
-            view.spin();
 
             imshow("display",display);
             cv::waitKey (0);
@@ -1203,6 +1191,32 @@ public:
             //            }
         }
 
+        void vizResultPclViewer(const vector<ClusterData>& cluster_data,PointCloudXYZ::Ptr pc_ptr)
+        {
+            pcl::visualization::PCLVisualizer view("v");
+            view.addPointCloud(pc_ptr,"scene");
+            for(int ii=0;ii<cluster_data.size();++ii)
+            {
+                pcl::visualization::PointCloudColorHandlerRandom<pcl::PointXYZ> color(cluster_data[ii].model_pc);
+                string str="model ";
+                stringstream ss;
+                ss<<ii;
+                str+=ss.str();
+                view.addPointCloud(cluster_data[ii].model_pc,color,str);
+
+                //Get eigen tf
+                Eigen::Affine3d obj_pose;
+                Eigen::Matrix3d rot;
+                cv2eigen(cluster_data[ii].orientation,rot);
+                obj_pose.linear()=rot;
+                obj_pose.translation()<<cluster_data[ii].position[0],cluster_data[ii].position[1],cluster_data[ii].position[2];
+                Eigen::Affine3f obj_pose_f=obj_pose.cast<float>();
+                //Eigen::Affine3f obj_pose_f=obj_pose;
+                view.addCoordinateSystem(0.05,obj_pose_f);
+            }
+            view.spin();
+        }
+
 };
 
 int main(int argc,char** argv)
@@ -1248,7 +1262,7 @@ int main(int argc,char** argv)
     ros::Rate loop(1);
 
     ros::Time now =ros::Time::now();
-    Mat cv_img=imread("/home/yake/catkin_ws/src/ensenso/pcd/1481939332_rgb.jpg",IMREAD_COLOR);
+    Mat cv_img=imread("/home/yake/catkin_ws/src/ensenso/pcd/1481939424_rgb.jpg",IMREAD_COLOR);
     cv_bridge::CvImagePtr bridge_img_ptr(new cv_bridge::CvImage);
     bridge_img_ptr->image=cv_img;
     bridge_img_ptr->encoding="bgr8";
@@ -1256,7 +1270,7 @@ int main(int argc,char** argv)
     srv.response.image = *bridge_img_ptr->toImageMsg();
 
     PointCloudXYZ::Ptr pc(new PointCloudXYZ);
-    pcl::io::loadPCDFile("/home/yake/catkin_ws/src/ensenso/pcd/1481939332_pc.pcd",*pc);
+    pcl::io::loadPCDFile("/home/yake/catkin_ws/src/ensenso/pcd/1481939424_pc.pcd",*pc);
     pcl::toROSMsg(*pc,srv.response.pointcloud);
     srv.response.pointcloud.header.frame_id="/camera_link";
     srv.response.pointcloud.header.stamp=now;
