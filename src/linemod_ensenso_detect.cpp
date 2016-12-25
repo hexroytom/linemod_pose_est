@@ -111,6 +111,7 @@ struct ClusterData{
     cv::Mat K_matrix;
     double dist;
     PointCloudXYZ::Ptr model_pc;
+    Eigen::Affine3d pose;
 
 };
 
@@ -403,9 +404,6 @@ public:
             t=(cv::getTickCount ()-t)/cv::getTickFrequency ();
             cout<<"Time consumed by pose refinement: "<<t<<endl;
 
-            //Viz in point cloud
-            vizResultPclViewer(cluster_data,pc_ptr);
-
             //Display all the bounding box
             for(int ii=0;ii<cluster_data.size();++ii)
             {
@@ -415,8 +413,8 @@ public:
             imshow("display",display);
             cv::waitKey (0);
 
-
-
+            //Viz in point cloud
+            vizResultPclViewer(cluster_data,pc_ptr);
 
         }
 
@@ -991,7 +989,7 @@ public:
                      //Compare current orientation with existing cluster
                      for(int i=0;i<orienClusters.size();++i)
                      {
-                         if(orientationCompare(R,orienClusters[i].front(),25.0))
+                         if(orientationCompare(R,orienClusters[i].front(),5.0))
                          {
                              found_cluster=true;
                              orienClusters[i].push_back(R);
@@ -1087,6 +1085,8 @@ public:
                  it->K_matrix=(Mat_<double>(3,3)<<renderer_focal_length_x,0.0,rect.width/2,
                                                0.0,renderer_focal_length_y,rect.height/2,
                                                0.0,0.0,1.0);
+                 it->pose.linear()=R_eig;
+
                  //Save position
                  int x=it->rect.x+it->rect.width/2;
                  int y=it->rect.y+it->rect.height/2;
@@ -1096,6 +1096,7 @@ public:
                     //Notice
                  pt.z+=D_aver;
                  it->position=cv::Vec3d(pt.x,pt.y,pt.z);
+                 it->pose.translation()<< pt.x,pt.y,pt.z;
 
 //                 //Get render point cloud
                  Mat pc_cv;
@@ -1155,6 +1156,14 @@ public:
                  icp.setInputSource (it->model_pc);
                  icp.setInputTarget (scene_pc);
                  icp.align (*(it->model_pc));
+
+                 //Update pose
+                 Eigen::Matrix4f tf_mat = icp.getFinalTransformation();
+                 Eigen::Matrix4d tf_mat_d=tf_mat.cast<double>();
+                 Eigen::Affine3d tf(tf_mat_d);
+                 it->pose=tf*it->pose;
+
+                 int p=0;
              }
          }
 
@@ -1259,13 +1268,14 @@ public:
                 view.addPointCloud(cluster_data[ii].model_pc,color,str);
 
                 //Get eigen tf
-                Eigen::Affine3d obj_pose;
-                Eigen::Matrix3d rot;
-                cv2eigen(cluster_data[ii].orientation,rot);
-                obj_pose.linear()=rot;
-                obj_pose.translation()<<cluster_data[ii].position[0],cluster_data[ii].position[1],cluster_data[ii].position[2];
-                Eigen::Affine3f obj_pose_f=obj_pose.cast<float>();
-                //Eigen::Affine3f obj_pose_f=obj_pose;
+//                Eigen::Affine3d obj_pose;
+//                Eigen::Matrix3d rot;
+//                cv2eigen(cluster_data[ii].orientation,rot);
+//                obj_pose.linear()=rot;
+//                obj_pose.translation()<<cluster_data[ii].position[0],cluster_data[ii].position[1],cluster_data[ii].position[2];
+
+                Eigen::Affine3f obj_pose_f=cluster_data[ii].pose.cast<float>();
+                //Eigen::Affine3f obj_pose_f=obj_pose.cast<float>();
                 view.addCoordinateSystem(0.08,obj_pose_f);
             }
             view.spin();
@@ -1316,7 +1326,7 @@ int main(int argc,char** argv)
     ros::Rate loop(1);
 
     ros::Time now =ros::Time::now();
-    Mat cv_img=imread("/home/yake/catkin_ws/src/ensenso/pcd/1481939332_rgb.jpg",IMREAD_COLOR);
+    Mat cv_img=imread("/home/yake/catkin_ws/src/ensenso/pcd/1482634406_rgb.jpg",IMREAD_COLOR);
     cv_bridge::CvImagePtr bridge_img_ptr(new cv_bridge::CvImage);
     bridge_img_ptr->image=cv_img;
     bridge_img_ptr->encoding="bgr8";
@@ -1324,7 +1334,7 @@ int main(int argc,char** argv)
     srv.response.image = *bridge_img_ptr->toImageMsg();
 
     PointCloudXYZ::Ptr pc(new PointCloudXYZ);
-    pcl::io::loadPCDFile("/home/yake/catkin_ws/src/ensenso/pcd/1481939332_pc.pcd",*pc);
+    pcl::io::loadPCDFile("/home/yake/catkin_ws/src/ensenso/pcd/1482634406_pc.pcd",*pc);
     pcl::toROSMsg(*pc,srv.response.pointcloud);
     srv.response.pointcloud.header.frame_id="/camera_link";
     srv.response.pointcloud.header.stamp=now;
