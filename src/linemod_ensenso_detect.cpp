@@ -280,7 +280,7 @@ public:
             //pci_real_1stICP_model= new LinemodPointcloud(nh, "real_1stICP_model", depth_frame_id_);
 
             icp.setMaximumIterations (icp_max_iter);
-            icp.setMaxCorrespondenceDistance (0.05);
+            icp.setMaxCorrespondenceDistance (0.01);
             icp.setTransformationEpsilon (icp_tr_epsilon);
             icp.setEuclideanFitnessEpsilon (icp_fitness_threshold);
 
@@ -407,7 +407,7 @@ public:
             //Display all the bounding box
             for(int ii=0;ii<cluster_data.size();++ii)
             {
-                rectangle(display,cluster_data[ii].rect,Scalar(0,0,255));
+                rectangle(display,cluster_data[ii].rect,Scalar(0,0,255),2);
             }
 
             imshow("display",display);
@@ -1326,7 +1326,7 @@ int main(int argc,char** argv)
     ros::Rate loop(1);
 
     ros::Time now =ros::Time::now();
-    Mat cv_img=imread("/home/yake/catkin_ws/src/ensenso/pcd/1482634406_rgb.jpg",IMREAD_COLOR);
+    Mat cv_img=imread("/home/yake/catkin_ws/src/ensenso/pcd/1482666469_rgb.jpg",IMREAD_COLOR);
     cv_bridge::CvImagePtr bridge_img_ptr(new cv_bridge::CvImage);
     bridge_img_ptr->image=cv_img;
     bridge_img_ptr->encoding="bgr8";
@@ -1334,7 +1334,7 @@ int main(int argc,char** argv)
     srv.response.image = *bridge_img_ptr->toImageMsg();
 
     PointCloudXYZ::Ptr pc(new PointCloudXYZ);
-    pcl::io::loadPCDFile("/home/yake/catkin_ws/src/ensenso/pcd/1482634406_pc.pcd",*pc);
+    pcl::io::loadPCDFile("/home/yake/catkin_ws/src/ensenso/pcd/1482666469_pc.pcd",*pc);
     pcl::toROSMsg(*pc,srv.response.pointcloud);
     srv.response.pointcloud.header.frame_id="/camera_link";
     srv.response.pointcloud.header.stamp=now;
