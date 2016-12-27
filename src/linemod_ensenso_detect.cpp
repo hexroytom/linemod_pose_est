@@ -44,6 +44,7 @@
 #include <pcl/common/common.h>
 #include <pcl_conversions/pcl_conversions.h>
 #include <pcl/filters/median_filter.h>
+#include <pcl/segmentation/extract_clusters.h>
 
 //ensenso
 #include <ensenso/RegistImage.h>
@@ -108,6 +109,7 @@ struct ClusterData{
     cv::Matx33d orientation;
     cv::Vec3d position;
     cv::Vec3d T_match;
+    cv::Mat mask;
     cv::Mat K_matrix;
     double dist;
     PointCloudXYZ::Ptr model_pc;
@@ -208,7 +210,7 @@ public:
 
     float px_match_min_;
     float icp_dist_min_;
-    float th_obj_dist_;
+    float orientation_clustering_th_;
 
     LinemodPointcloud *pci_real_icpin_ref;
     LinemodPointcloud *pci_real_icpin_model;
@@ -229,7 +231,7 @@ public:
 
 
 public:
-        linemod_detect(std::string template_file_name,std::string renderer_params_name,std::string mesh_path,float detect_score_threshold,float clustering_threshold,int icp_max_iter,float icp_tr_epsilon,float icp_fitness_threshold,uchar clustering_step):
+        linemod_detect(std::string template_file_name,std::string renderer_params_name,std::string mesh_path,float detect_score_threshold,int icp_max_iter,float icp_tr_epsilon,float icp_fitness_threshold, float icp_maxCorresDist, uchar clustering_step,float orientation_clustering_th):
             it(nh),
             sub_color(nh,"/camera/rgb/image_rect_color",1),
             sub_depth(nh,"/camera/depth_registered/image_raw",1),
@@ -250,7 +252,6 @@ public:
 
             //ork default param
             threshold=detect_score_threshold;
-            th_obj_dist_=clustering_threshold;
 
             //read the saved linemod detecor
             detector=readLinemod (template_file_name);
@@ -280,9 +281,10 @@ public:
             //pci_real_1stICP_model= new LinemodPointcloud(nh, "real_1stICP_model", depth_frame_id_);
 
             icp.setMaximumIterations (icp_max_iter);
-            icp.setMaxCorrespondenceDistance (0.01);
+            icp.setMaxCorrespondenceDistance (icp_maxCorresDist);
             icp.setTransformationEpsilon (icp_tr_epsilon);
             icp.setEuclideanFitnessEpsilon (icp_fitness_threshold);
+
 
             R_diag=Matx<float,3,3>(1.0,0.0,0.0,
                                   0.0,1.0,0.0,
@@ -295,6 +297,8 @@ public:
             ensenso_registImg_client=nh.serviceClient<ensenso::RegistImage>("grab_registered_image");
             ensenso_singlePc_client=nh.serviceClient<ensenso::CaptureSinglePointCloud>("capture_single_point_cloud");
 
+            //Orientation Clustering threshold
+            orientation_clustering_th_=orientation_clustering_th;
 
         }
 
@@ -397,6 +401,8 @@ public:
             getRoughPoseByClustering(cluster_data,pc_ptr);
             t=(cv::getTickCount ()-t)/cv::getTickFrequency ();
             cout<<"Time consumed by pose clustering: "<<t<<endl;
+
+            vizResultPclViewer(cluster_data,pc_ptr);
 
             //Pose refinement
             t=cv::getTickCount ();
@@ -989,7 +995,7 @@ public:
                      //Compare current orientation with existing cluster
                      for(int i=0;i<orienClusters.size();++i)
                      {
-                         if(orientationCompare(R,orienClusters[i].front(),5.0))
+                         if(orientationCompare(R,orienClusters[i].front(),orientation_clustering_th_))
                          {
                              found_cluster=true;
                              orienClusters[i].push_back(R);
@@ -1098,6 +1104,9 @@ public:
                  it->position=cv::Vec3d(pt.x,pt.y,pt.z);
                  it->pose.translation()<< pt.x,pt.y,pt.z;
 
+                 //Save mask
+                 it->mask=mask;
+
 //                 //Get render point cloud
                  Mat pc_cv;
                  cv::depthTo3d(depth_render,it->K_matrix,pc_cv);    //mm ---> m
@@ -1143,11 +1152,10 @@ public:
              {
                 //Get point cloud indices
                  pcl::PointIndices::Ptr indices(new pcl::PointIndices);
-                 indices=getPointCloudIndices(it->rect);
+                 indices=getPointCloudIndices(it);
                 //Extract pc according to indices
                  PointCloudXYZ::Ptr scene_pc(new PointCloudXYZ);
                  extractPointsByIndices(indices,pc,scene_pc,false,false);
-
 
                  vector<int> index;
                  it->model_pc->is_dense=false;
@@ -1202,6 +1210,31 @@ public:
                     int index=y_uncropped*752+x_uncropped;
                     indices->indices.push_back(index);
 
+                }
+            }
+            return indices;
+
+        }
+
+        pcl::PointIndices::Ptr getPointCloudIndices(vector<ClusterData>::iterator& it)
+        {
+            int x_cropped=0;
+            int y_cropped=0;
+            pcl::PointIndices::Ptr indices(new pcl::PointIndices);
+            for(int i=0;i<it->mask.rows;++i)
+            {
+                const uchar* row_data=it->mask.ptr<uchar>(i);
+                for(int j=0;j<it->mask.cols;++j)
+                {
+                    //Notice: the coordinate of input params "rect" is w.r.t cropped image, so the offset is needed to transform coordinate
+                    if(row_data[j]>0)
+                    {
+                        x_cropped=j+it->rect.x;
+                        y_cropped=i+it->rect.y;
+                        //Attention: image width of ensenso: 752, image height of ensenso: 480
+                        int index=y_cropped*752+x_cropped+56;
+                        indices->indices.push_back(index);
+                    }
                 }
             }
             return indices;
@@ -1281,6 +1314,26 @@ public:
             view.spin();
         }
 
+        void euclidianClustering(PointCloudXYZ::Ptr pts,float dist)
+        {
+            pcl::search::KdTree<pcl::PointXYZ>::Ptr tree (new pcl::search::KdTree<pcl::PointXYZ>);
+            tree->setInputCloud (pts);
+            std::vector<int> index1;
+            pcl::removeNaNFromPointCloud(*pts,*pts,index1);
+
+            std::vector<pcl::PointIndices> cluster_indices;
+            pcl::EuclideanClusterExtraction<pcl::PointXYZ> ec;
+            ec.setClusterTolerance (dist); // 1cm
+            ec.setMinClusterSize (50);
+            ec.setMaxClusterSize (25000);
+            ec.setSearchMethod (tree);
+            ec.setInputCloud (pts);
+            ec.extract (cluster_indices);
+            PointCloudXYZ::Ptr pts_filtered(new PointCloudXYZ);
+            extractPointsByIndices(boost::make_shared<pcl::PointIndices>(cluster_indices[0]),pts,pts_filtered,false,false);
+            pts.swap(pts_filtered);
+        }
+
 };
 
 int main(int argc,char** argv)
@@ -1290,43 +1343,35 @@ int main(int argc,char** argv)
     std::string renderer_param_path;
     std::string model_stl_path;
     float detect_score_th;
-    float clustering_th;
     int icp_max_iter;
     float icp_tr_epsilon;
     float icp_fitness_th;
+    float icp_maxCorresDist;
     uchar clustering_step;
-    if(argc<8)
-    {
-        linemod_template_path="/home/yake/catkin_ws/src/linemod_pose_est/config/data/pipe_linemod_ensenso_templates.yml";
-        renderer_param_path="/home/yake/catkin_ws/src/linemod_pose_est/config/data/pipe_linemod_ensenso_renderer_params.yml";
-        model_stl_path="/home/yake/catkin_ws/src/linemod_pose_est/config/stl/pipe_connector.stl";
-        detect_score_th=93.0;
-        clustering_th=0.02;
-        icp_max_iter=25;
-        icp_tr_epsilon=0.001;
-        icp_fitness_th=0.002;
-        clustering_step=4;
-    }
-    else
-    {
+    float orientation_clustering_step;
+
     linemod_template_path=argv[1];
     renderer_param_path=argv[2];
     model_stl_path=argv[3];
     detect_score_th=atof(argv[4]);
-    clustering_th=atof(argv[5]);
-    icp_max_iter=atoi(argv[6]);
-    icp_tr_epsilon=atof(argv[7]);
-    icp_fitness_th=atof(argv[8]);
-    }
+    icp_max_iter=atoi(argv[5]);
+    icp_tr_epsilon=atof(argv[6]);
+    icp_fitness_th=atof(argv[7]);
+    icp_maxCorresDist=atof(argv[8]);
+    clustering_step=atoi(argv[9]);
+    orientation_clustering_step=atof(argv[10]);
+
     linemod_detect detector(linemod_template_path,renderer_param_path,model_stl_path,
-                            detect_score_th,clustering_th,icp_max_iter,icp_tr_epsilon,icp_fitness_th,clustering_step);
+                            detect_score_th,icp_max_iter,icp_tr_epsilon,icp_fitness_th,icp_maxCorresDist,clustering_step,orientation_clustering_step);
 
     ensenso::RegistImage srv;
     srv.request.is_rgb=true;
     ros::Rate loop(1);
 
+    string img_path=argv[11];
+    string pc_path=argv[12];
     ros::Time now =ros::Time::now();
-    Mat cv_img=imread("/home/yake/catkin_ws/src/ensenso/pcd/1482666469_rgb.jpg",IMREAD_COLOR);
+    Mat cv_img=imread(img_path,IMREAD_COLOR);
     cv_bridge::CvImagePtr bridge_img_ptr(new cv_bridge::CvImage);
     bridge_img_ptr->image=cv_img;
     bridge_img_ptr->encoding="bgr8";
@@ -1334,7 +1379,7 @@ int main(int argc,char** argv)
     srv.response.image = *bridge_img_ptr->toImageMsg();
 
     PointCloudXYZ::Ptr pc(new PointCloudXYZ);
-    pcl::io::loadPCDFile("/home/yake/catkin_ws/src/ensenso/pcd/1482666469_pc.pcd",*pc);
+    pcl::io::loadPCDFile(pc_path,*pc);
     pcl::toROSMsg(*pc,srv.response.pointcloud);
     srv.response.pointcloud.header.frame_id="/camera_link";
     srv.response.pointcloud.header.stamp=now;
