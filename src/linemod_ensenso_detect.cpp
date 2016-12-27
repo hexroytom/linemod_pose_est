@@ -45,6 +45,7 @@
 #include <pcl_conversions/pcl_conversions.h>
 #include <pcl/filters/median_filter.h>
 #include <pcl/segmentation/extract_clusters.h>
+#include <pcl/filters/statistical_outlier_removal.h>
 
 //ensenso
 #include <ensenso/RegistImage.h>
@@ -1142,7 +1143,9 @@ public:
                  PointCloudXYZ::Ptr transformed_cloud (new PointCloudXYZ ());
                  pcl::transformPointCloud(*it->model_pc,*transformed_cloud,transform);
 
-                 it->model_pc.swap(transformed_cloud);
+                 //it->model_pc.swap(transformed_cloud);
+
+                 pcl::copyPointCloud(*transformed_cloud,*(it->model_pc));
              }
          }
 
@@ -1157,18 +1160,44 @@ public:
                  PointCloudXYZ::Ptr scene_pc(new PointCloudXYZ);
                  extractPointsByIndices(indices,pc,scene_pc,false,false);
 
+                 //Viz for test
+//                 pcl::visualization::PCLVisualizer v("view_test");
+//                 v.addPointCloud(scene_pc,"scene");
+//                 v.spin();
+
+                 //Remove Nan points
                  vector<int> index;
                  it->model_pc->is_dense=false;
                  pcl::removeNaNFromPointCloud(*(it->model_pc),*(it->model_pc),index);
                  pcl::removeNaNFromPointCloud(*scene_pc,*scene_pc,index);
+
+                 //Statistical outlier removal
+                 statisticalOutlierRemoval(scene_pc,50,1.0);
+
+                 //Viz for test
+//                 v.updatePointCloud(scene_pc,"scene");
+//                 v.spin();
+
+                 //Coarse alignment
                  icp.setInputSource (it->model_pc);
                  icp.setInputTarget (scene_pc);
                  icp.align (*(it->model_pc));
-
                  //Update pose
                  Eigen::Matrix4f tf_mat = icp.getFinalTransformation();
                  Eigen::Matrix4d tf_mat_d=tf_mat.cast<double>();
                  Eigen::Affine3d tf(tf_mat_d);
+                 it->pose=tf*it->pose;
+
+                 //Fine alignment
+                 icp.setMaximumIterations(30);
+                 icp.setMaxCorrespondenceDistance(0.01);
+                 icp.setInputSource (it->model_pc);
+                 icp.setInputTarget (scene_pc);
+                 icp.align (*(it->model_pc));
+                 //Update pose
+                 tf_mat = icp.getFinalTransformation();
+                 tf_mat_d=tf_mat.cast<double>();
+                 tf.matrix()=tf_mat_d;
                  it->pose=tf*it->pose;
 
                  int p=0;
@@ -1331,7 +1360,20 @@ public:
             ec.extract (cluster_indices);
             PointCloudXYZ::Ptr pts_filtered(new PointCloudXYZ);
             extractPointsByIndices(boost::make_shared<pcl::PointIndices>(cluster_indices[0]),pts,pts_filtered,false,false);
-            pts.swap(pts_filtered);
+            //pts.swap(pts_filtered);
+            pcl::copyPointCloud(*pts_filtered,*pts);
+        }
+
+        void statisticalOutlierRemoval(PointCloudXYZ::Ptr pts, int num_neighbor,float stdDevMulThresh)
+        {
+            PointCloudXYZ::Ptr pts_filtered(new PointCloudXYZ);
+            pcl::StatisticalOutlierRemoval<pcl::PointXYZ> sor;
+            sor.setInputCloud (pts);
+            sor.setMeanK (num_neighbor);
+            sor.setStddevMulThresh (stdDevMulThresh);
+            sor.filter (*pts_filtered);
+            //pts.swap(pts_filtered);
+            pcl::copyPointCloud(*pts_filtered,*pts);
         }
 
 };
