@@ -382,7 +382,7 @@ public:
             rcd_voting(vote_row_col_step, vote_depth_step, matches,map_match, voting_height_cells, voting_width_cells);
 
             //Filter based on size of clusters
-            uchar thresh=10;
+            uchar thresh=1;
             cluster_filter(map_match,thresh);
 
             //Compute criteria for each cluster
@@ -1047,6 +1047,7 @@ public:
                  double D_aver=0.0;
                  double Trans_aver=0.0;
                  vector<Eigen::Matrix3d>::iterator iter=orienClusters[0].begin();
+                 bool is_center_hole=false;
                  for(int i=0;iter!=orienClusters[0].end();++iter,++i)
                  {
                      //get rotation
@@ -1062,6 +1063,7 @@ public:
                      //Get translation
                      Trans_aver+=Obj_origin_dists[idClusters[0][i]];
                  }
+
                 //Averaging operation
                  R_aver/=orienClusters[0].size();
                  T_aver/=orienClusters[0].size();
@@ -1073,6 +1075,11 @@ public:
                  Eigen::Matrix3d R_eig;
                  R_eig=quat.toRotationMatrix();
                  eigen2cv(R_eig,R_mat);
+
+                 if(fabs(D_aver-Trans_aver) < 0.001)
+                     {
+                     is_center_hole=true;
+                 }
 
                  cv::Mat mask;
                  cv::Rect rect;
@@ -1107,8 +1114,8 @@ public:
                  x+=56;
                  pcl::PointXYZ obj_center =pc->at(x,y);
 
-                 //Deal with the situation that there is a hole in ROI
-                 if(pcl_isnan(obj_center.x) || pcl_isnan(obj_center.y) || pcl_isnan(obj_center.z))
+                 //Deal with the situation that there is a hole in ROI or in the model pointcloud during rendering
+                 if(pcl_isnan(obj_center.x) || pcl_isnan(obj_center.y) || pcl_isnan(obj_center.z) || is_center_hole)
                  {
                      PointCloudXYZ::Ptr pts_tmp(new PointCloudXYZ());
                      pcl::PointIndices::Ptr indices_tmp(new pcl::PointIndices());
@@ -1133,8 +1140,11 @@ public:
                      }
                  }
 
-                 //Notice
-                 obj_center.z+=D_aver;
+                 //Notice: No hole in the center
+                 if(!is_center_hole)
+                 {
+                     obj_center.z+=D_aver;
+                 }
                  it->position=cv::Vec3d(obj_center.x,obj_center.y,obj_center.z);
                  it->pose.translation()<< obj_center.x,obj_center.y,obj_center.z;
 
@@ -1222,7 +1232,21 @@ public:
                  Eigen::Affine3d tf(tf_mat_d);
                  it->pose=tf*it->pose;                 
 
-                 //Fine alignment
+                 //Fine alignment 1
+                 icp.setMaximumIterations(20);
+                 icp.setMaxCorrespondenceDistance(0.02);
+                 icp.setInputSource (it->model_pc);
+                 icp.setInputTarget (scene_pc);
+                 icp.align (*(it->model_pc));
+                 if(!icp.hasConverged())
+                     cout<<"ICP cannot converge"<<endl;
+                 //Update pose
+                 tf_mat = icp.getFinalTransformation();
+                 tf_mat_d=tf_mat.cast<double>();
+                 tf.matrix()=tf_mat_d;
+                 it->pose=tf*it->pose;
+
+                 //Fine alignment 2
                  icp.setMaximumIterations(10);
                  icp.setMaxCorrespondenceDistance(0.01);
                  icp.setInputSource (it->model_pc);

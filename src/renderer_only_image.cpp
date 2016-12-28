@@ -164,10 +164,10 @@ int main(int argc,char** argv)
         renderer_far_ = 1000.0;
         renderer_focal_length_x_ = 844.5966796875;//Kinect ;//xtion 570.342;
         renderer_focal_length_y_ = 844.5966796875;//Kinect //xtion 570.342;
-        stl_file="/home/yake/catkin_ws/src/linemod_pose_est/config/stl/pipe_connector.stl";
-        template_output_path="/home/yake/catkin_ws/src/linemod_pose_est/config/data/pipe_linemod_ensenso_templates.yml";
-        renderer_params_output_path="/home/yake/catkin_ws/src/linemod_pose_est/config/data/pipe_linemod_ensenso_renderer_params.yml";
-        renderer_depth_output_path="/home/yake/catkin_ws/src/linemod_pose_est/config/data/pipe_linemod_ensenso_renderer_depth.yml";
+        stl_file="/home/yake/catkin_ws/src/linemod_pose_est/config/stl/t_pipe_connector.stl";
+        template_output_path="/home/yake/catkin_ws/src/linemod_pose_est/config/data/t_pipe_linemod_ensenso_templates.yml";
+        renderer_params_output_path="/home/yake/catkin_ws/src/linemod_pose_est/config/data/t_pipe_linemod_ensenso_renderer_params.yml";
+        renderer_depth_output_path="/home/yake/catkin_ws/src/linemod_pose_est/config/data/t_pipe_linemod_ensenso_renderer_depth.yml";
     }else{
      renderer_n_points_ = 150;
      renderer_angle_step_ = 10;
@@ -222,7 +222,19 @@ int main(int argc,char** argv)
       T = renderer_iterator.T();
       //D_obj distance from camera to object origin
       double surface_center=double(depth.at<ushort>(depth.rows/2.0f, depth.cols/2.0f)/1000.0f);
-      double distance = (double)renderer_iterator.D_obj() - surface_center;
+      double distance;
+      if(surface_center==0)
+      {
+//          cv::Scalar depth_total=cv::sum(depth);
+//          cv::Scalar tmp=cv::sum(mask);
+//          int num_elem=tmp[0]/255;
+//          double depth_aver=depth_total[0]/(1000*num_elem);
+//          surface_center=depth_aver;
+          distance = (double)renderer_iterator.D_obj() - surface_center;
+      }else
+      {
+          distance = (double)renderer_iterator.D_obj() - surface_center;
+      }
       double obj_origin_dist=(double)renderer_iterator.D_obj();
       K = cv::Matx33f(float(renderer_focal_length_x_), 0.0f, float(rect.width)/2.0f, 0.0f, float(renderer_focal_length_y_), float(rect.height)/2.0f, 0.0f, 0.0f, 1.0f);
 
