@@ -1045,6 +1045,7 @@ public:
                  Eigen::Vector3d T_aver(0.0,0.0,0.0);
                  Eigen::Vector4d R_aver(0.0,0.0,0.0,0.0);
                  double D_aver=0.0;
+                 double Trans_aver=0.0;
                  vector<Eigen::Matrix3d>::iterator iter=orienClusters[0].begin();
                  for(int i=0;iter!=orienClusters[0].end();++iter,++i)
                  {
@@ -1058,12 +1059,14 @@ public:
                      T_aver+=T;
                      //Get distance
                      D_aver+=Distances_[idClusters[0][i]];
-
+                     //Get translation
+                     Trans_aver+=Obj_origin_dists[idClusters[0][i]];
                  }
                 //Averaging operation
                  R_aver/=orienClusters[0].size();
                  T_aver/=orienClusters[0].size();
                  D_aver/=orienClusters[0].size();
+                 Trans_aver/=orienClusters[0].size();
                 //normalize the averaged quaternion
                  Eigen::Quaterniond quat=Eigen::Quaterniond(R_aver).normalized();
                  cv::Mat R_mat;
@@ -1085,6 +1088,9 @@ public:
 //                 imshow("mask",mask);
 //                 waitKey(0);
 
+                 //Save mask
+                 it->mask=mask;
+
                  //Save orientation, T_match and K_matrix
                  it->orientation=R_match;
                  it->T_match=T_match;
@@ -1099,16 +1105,40 @@ public:
                  int y=it->rect.y+it->rect.height/2;
                  //Add offset to x due to previous cropping operation
                  x+=56;
-                 pcl::PointXYZ pt =pc->at(x,y);
-                    //Notice
-                 pt.z+=D_aver;
-                 it->position=cv::Vec3d(pt.x,pt.y,pt.z);
-                 it->pose.translation()<< pt.x,pt.y,pt.z;
+                 pcl::PointXYZ obj_center =pc->at(x,y);
 
-                 //Save mask
-                 it->mask=mask;
+                 //Deal with the situation that there is a hole in ROI
+                 if(pcl_isnan(obj_center.x) || pcl_isnan(obj_center.y) || pcl_isnan(obj_center.z))
+                 {
+                     PointCloudXYZ::Ptr pts_tmp(new PointCloudXYZ());
+                     pcl::PointIndices::Ptr indices_tmp(new pcl::PointIndices());
+                     vector<int> index_tmp;
 
-//                 //Get render point cloud
+                     indices_tmp=getPointCloudIndices(it);
+                     extractPointsByIndices(indices_tmp,pc,pts_tmp,false,false);
+                     pcl::removeNaNFromPointCloud(*pts_tmp,*pts_tmp,index_tmp);
+
+                     //Comptute centroid
+                     Eigen::Matrix<double,4,1> centroid;
+                     if(pcl::compute3DCentroid<pcl::PointXYZ,double>(*pts_tmp,centroid)!=0)
+                     {
+                         //Replace the Nan center point with centroid
+                         obj_center.x=centroid[0];
+                         obj_center.y=centroid[1];
+                         obj_center.z=centroid[2];
+                     }
+                     else
+                     {
+                        ROS_ERROR("Pose clustering: unable to compute centroid of the pointcloud!");
+                     }
+                 }
+
+                 //Notice
+                 obj_center.z+=D_aver;
+                 it->position=cv::Vec3d(obj_center.x,obj_center.y,obj_center.z);
+                 it->pose.translation()<< obj_center.x,obj_center.y,obj_center.z;
+
+                 //Get render point cloud
                  Mat pc_cv;
                  cv::depthTo3d(depth_render,it->K_matrix,pc_cv);    //mm ---> m
 
@@ -1133,9 +1163,11 @@ public:
                      }
                  }
 
-                 //Transform the pc                 
-                 pcl::PointXYZ pt_scene =pc->at(x,y);
-                 pcl::PointXYZ pt_model=it->model_pc->at(it->model_pc->width/2,it->model_pc->height/2);
+                 //Transform the pc
+                 //pcl::PointXYZ pt_scene(obj_center.x,obj_center.y,obj_center.z-D_aver);
+                 //pcl::PointXYZ pt_model=it->model_pc->at(it->model_pc->width/2,it->model_pc->height/2);
+                 pcl::PointXYZ pt_scene(obj_center.x,obj_center.y,obj_center.z);
+                 pcl::PointXYZ pt_model(0.0,0.0,Trans_aver);
                  pcl::PointXYZ translation(pt_scene.x -pt_model.x,pt_scene.y -pt_model.y,pt_scene.z -pt_model.z);
                  Eigen::Affine3d transform =Eigen::Affine3d::Identity();
                  transform.translation()<<translation.x, translation.y, translation.z;
@@ -1182,18 +1214,22 @@ public:
                  icp.setInputSource (it->model_pc);
                  icp.setInputTarget (scene_pc);
                  icp.align (*(it->model_pc));
+                 if(!icp.hasConverged())
+                     cout<<"ICP cannot converge"<<endl;
                  //Update pose
                  Eigen::Matrix4f tf_mat = icp.getFinalTransformation();
                  Eigen::Matrix4d tf_mat_d=tf_mat.cast<double>();
                  Eigen::Affine3d tf(tf_mat_d);
-                 it->pose=tf*it->pose;
+                 it->pose=tf*it->pose;                 
 
                  //Fine alignment
-                 icp.setMaximumIterations(30);
+                 icp.setMaximumIterations(10);
                  icp.setMaxCorrespondenceDistance(0.01);
                  icp.setInputSource (it->model_pc);
                  icp.setInputTarget (scene_pc);
                  icp.align (*(it->model_pc));
+                 if(!icp.hasConverged())
+                     cout<<"ICP cannot converge"<<endl;
                  //Update pose
                  tf_mat = icp.getFinalTransformation();
                  tf_mat_d=tf_mat.cast<double>();

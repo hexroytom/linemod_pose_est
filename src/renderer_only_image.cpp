@@ -221,7 +221,8 @@ int main(int argc,char** argv)
       R = renderer_iterator.R_obj();
       T = renderer_iterator.T();
       //D_obj distance from camera to object origin
-      double distance = (double)renderer_iterator.D_obj() - double(depth.at<ushort>(depth.rows/2.0f, depth.cols/2.0f)/1000.0f);
+      double surface_center=double(depth.at<ushort>(depth.rows/2.0f, depth.cols/2.0f)/1000.0f);
+      double distance = (double)renderer_iterator.D_obj() - surface_center;
       double obj_origin_dist=(double)renderer_iterator.D_obj();
       K = cv::Matx33f(float(renderer_focal_length_x_), 0.0f, float(rect.width)/2.0f, 0.0f, float(renderer_focal_length_y_), float(rect.height)/2.0f, 0.0f, 0.0f, 1.0f);
 
