@@ -53,6 +53,7 @@ static void writeLinemodTemplateParams(std::string fileName,
                                        std::vector<double>& distances,
                                        std::vector<double>& obj_origin_dists,
                                        std::vector<cv::Mat>& Ks,
+                                       std::vector<cv::Rect>& Rects,
                                        int& renderer_n_points,
                                        int& renderer_angle_step,
                                        double& renderer_radius_min,
@@ -81,6 +82,7 @@ static void writeLinemodTemplateParams(std::string fileName,
         fs<<"K"<<Ks[i];
         fs<<"D"<<distances[i];
         fs<<"Ori_dist"<<obj_origin_dists[i];
+        fs<<"Rect"<<Rects[i];
         fs<<"}";
     }
     //fs<<"K Intrinsic Matrix"<<cv::Mat(K_matrix);
@@ -97,7 +99,6 @@ static void writeLinemodTemplateParams(std::string fileName,
     fs<<"renderer_far"<<renderer_far;
     fs.release ();
 }
-
 static void writeLinemodRender(std::string& fileName,
                                        std::vector<cv::Mat>& depth_img,
                                        std::vector<cv::Mat>& mask,
@@ -154,19 +155,19 @@ int main(int argc,char** argv)
         {
         renderer_n_points_ = 150;
         renderer_angle_step_ = 10;
-        renderer_radius_min_ = 0.4;
-        renderer_radius_max_ = 0.6;
+        renderer_radius_min_ = 0.5;
+        renderer_radius_max_ = 0.7;
         renderer_radius_step_ = 0.1;
-        renderer_width_ = 752;
+        renderer_width_ = 640; //ensenso 752
         renderer_height_ = 480;
         renderer_near_ = 0.1;
         renderer_far_ = 1000.0;
-        renderer_focal_length_x_ = 844.5966796875;//Kinect ;//xtion 570.342;
-        renderer_focal_length_y_ = 844.5966796875;//Kinect //xtion 570.342;
+        renderer_focal_length_x_ = 535.566011;//Kinect ;//carmine 535.566011;
+        renderer_focal_length_y_ = 537.168115;//Kinect //carmine 537.168115;
         stl_file="/home/yake/catkin_ws/src/linemod_pose_est/config/stl/pipe_connector.stl";
-        template_output_path="/home/yake/catkin_ws/src/linemod_pose_est/config/data/pipe_linemod_ensenso_templates.yml";
-        renderer_params_output_path="/home/yake/catkin_ws/src/linemod_pose_est/config/data/pipe_linemod_ensenso_renderer_params.yml";
-        renderer_depth_output_path="/home/yake/catkin_ws/src/linemod_pose_est/config/data/pipe_linemod_ensenso_renderer_depth.yml";
+        template_output_path="/home/yake/catkin_ws/src/linemod_pose_est/config/data/pipe_linemod_carmine_templates.yml";
+        renderer_params_output_path="/home/yake/catkin_ws/src/linemod_pose_est/config/data/pipe_linemod_carmine_renderer_params.yml";
+        renderer_depth_output_path="/home/yake/catkin_ws/src/linemod_pose_est/config/data/pipe_linemod_carmine_renderer_depth.yml";
     }else{
      renderer_n_points_ = 150;
      renderer_angle_step_ = 10;
@@ -258,6 +259,7 @@ int main(int argc,char** argv)
       distances_.push_back(distance);
       Ks_.push_back(cv::Mat(K));
       Origin_dists_.push_back (obj_origin_dist);
+      rects.push_back(rect);
 
       //Store depth image, mask and rect
 //      depth_img.push_back(depth);
@@ -276,6 +278,7 @@ int main(int argc,char** argv)
                                 distances_,
                                 Origin_dists_,
                                 Ks_,
+                                rects,
                                 renderer_n_points_,
                                 renderer_angle_step_,
                                 renderer_radius_min_,

@@ -152,8 +152,8 @@ add_executable(linemod_renderer_node src/test_renderer.cpp)
 add_executable(linemod_image_renderer_node src/renderer_only_image.cpp)
 add_executable(linemod_detect_node src/linemod_detect.cpp src/linemod_icp.cpp src/linemod_pointcloud.cpp)# src/db_linemod.cpp)
 add_executable(linemod_ensenso_detect_node src/linemod_ensenso_detect.cpp src/linemod_icp.cpp src/linemod_pointcloud.cpp)
-#add_executable(linemod_detect_modified_node src/linemod_detect_modified.cpp src/linemod_icp.cpp src/linemod_pointcloud.cpp src/db_linemod.cpp)
-#add_executable(linemod_demo_node src/linemod_demo.cpp src/linemod_icp.cpp src/linemod_pointcloud.cpp src/db_linemod.cpp)
+add_executable(linemod_carmine_detect_node src/linemod_carmine_detect.cpp src/linemod_icp.cpp src/linemod_pointcloud.cpp)
+
 ## Add cmake target dependencies of the executable
 ## same as for the library above
 # add_dependencies(linemod_pose_estimation_node ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
@@ -181,6 +181,12 @@ target_link_libraries(linemod_detect_node
 )
 
 target_link_libraries(linemod_ensenso_detect_node
+  ${catkin_LIBRARIES}
+  ${OpenCV_LIBRARIES}
+  ${PCL_LIBRARIES}
+)
+
+target_link_libraries(linemod_carmine_detect_node
   ${catkin_LIBRARIES}
   ${OpenCV_LIBRARIES}
   ${PCL_LIBRARIES}

@@ -58,6 +58,7 @@
 #include <math.h>
 
 //time synchronize
+#include <message_filters/time_synchronizer.h>
 #define APPROXIMATE
 
 #ifdef EXACT
@@ -68,10 +69,10 @@
 #endif
 
 #ifdef EXACT
-typedef message_filters::sync_policies::ExactTime<sensor_msgs::Image, sensor_msgs::Image> SyncPolicy;
+typedef message_filters::sync_policies::ExactTime<sensor_msgs::Image, sensor_msgs::Image,sensor_msgs::PointCloud2> SyncPolicy;
 #endif
 #ifdef APPROXIMATE
-typedef message_filters::sync_policies::ApproximateTime<sensor_msgs::Image, sensor_msgs::Image> SyncPolicy;
+typedef message_filters::sync_policies::ApproximateTime<sensor_msgs::Image, sensor_msgs::Image, sensor_msgs::PointCloud2> SyncPolicy;
 #endif
 
 typedef pcl::PointCloud<pcl::PointXYZ> PointCloudXYZ;
@@ -173,7 +174,9 @@ class linemod_detect
     //image_transport::Publisher pub_depth;
     message_filters::Subscriber<sensor_msgs::Image> sub_color;
     message_filters::Subscriber<sensor_msgs::Image> sub_depth;
+    message_filters::Subscriber<sensor_msgs::PointCloud2> sub_pc;
     message_filters::Synchronizer<SyncPolicy> sync;
+    //message_filters::TimeSynchronizer<sensor_msgs::Image,sensor_msgs::Image,sensor_msgs::PointCloud2> timeSync;
     ros::Publisher pc_rgb_pub_;
     ros::Publisher extract_pc_pub;
 
@@ -234,10 +237,11 @@ public:
 public:
         linemod_detect(std::string template_file_name,std::string renderer_params_name,std::string mesh_path,float detect_score_threshold,int icp_max_iter,float icp_tr_epsilon,float icp_fitness_threshold, float icp_maxCorresDist, uchar clustering_step,float orientation_clustering_th):
             it(nh),
-            sub_color(nh,"/camera/rgb/image_rect_color",1),
-            sub_depth(nh,"/camera/depth_registered/image_raw",1),
+            sub_color(nh,"/camera/rgb/image_rect_color",5),
+            sub_depth(nh,"/camera/depth_registered/image_raw",5),
+            sub_pc(nh,"/camera/depth_registered/points",5),
             depth_frame_id_("camera_link"),
-            sync(SyncPolicy(1), sub_color, sub_depth),
+            sync(SyncPolicy(10), sub_color, sub_depth,sub_pc),
             px_match_min_(0.25f),
             icp_dist_min_(0.06f),
             clustering_step_(clustering_step)
@@ -249,7 +253,7 @@ public:
             extract_pc_pub = nh.advertise<sensor_msgs::PointCloud2>("/render_pc",1);
 
             //the intrinsic matrix
-            //sub_cam_info=nh.subscribe("/camera/depth/camera_info",1,&linemod_detect::read_cam_info,this);
+            sub_cam_info=nh.subscribe("/camera/depth/camera_info",1,&linemod_detect::read_cam_info,this);
 
             //ork default param
             threshold=detect_score_threshold;
@@ -301,6 +305,9 @@ public:
             //Orientation Clustering threshold
             orientation_clustering_th_=orientation_clustering_th;
 
+            //Subscribe to rgb image topic and depth image topic
+            sync.registerCallback(boost::bind(&linemod_detect::detect_cb,this,_1,_2,_3));
+
         }
 
         virtual ~linemod_detect()
@@ -309,38 +316,31 @@ public:
                 free(accumulator);
         }
 
-        void detect_cb(const sensor_msgs::Image& msg_rgb,sensor_msgs::PointCloud2 pc,bool is_rgb)
+        void detect_cb(const sensor_msgs::ImageConstPtr& msg_rgb , const sensor_msgs::ImageConstPtr& msg_depth,const sensor_msgs::PointCloud2ConstPtr& msg_pc2)
         {
-            //Convert image mgs to OpenCV
-            Mat mat_rgb;
-            Mat mat_grey;
-            //if the image comes from monocular camera
-            if(is_rgb)
+            //Wait for a little bit
+            sleep(1);
+            //Read camera intrinsic params
+            if(!is_K_read)
+                return;
+            //If LINEMOD detector is not loaded correctly, return
+            if(detector->classIds ().empty ())
             {
-                cv_bridge::CvImagePtr img_ptr=cv_bridge::toCvCopy(msg_rgb,sensor_msgs::image_encodings::BGR8);
-                img_ptr->image.copyTo(mat_rgb);
-            }else //if the image comes from left camera of the stereo camera
-                {
-                cv_bridge::CvImagePtr img_ptr=cv_bridge::toCvCopy(msg_rgb,sensor_msgs::image_encodings::MONO8);
-                img_ptr->image.copyTo(mat_grey);
-                mat_rgb.create(mat_grey.rows,mat_grey.cols,CV_8UC3);
-                int from_to[]={0,0,0,1,0,2};
-                mixChannels(&mat_grey,1,&mat_rgb,1,from_to,3);
-
-                //imshow("grey",mat_grey);
-                imshow("conbined_gray",mat_rgb);
-                waitKey(0);
+                ROS_INFO("Linemod detector is empty");
+                return;
             }
 
-            //Convert pointcloud2 msg to PCL
-            pcl::PointCloud<pcl::PointXYZ>::Ptr pc_ptr (new pcl::PointCloud<pcl::PointXYZ>);
-            pcl::PointCloud<pcl::PointXYZ>::Ptr pc_median_ptr (new pcl::PointCloud<pcl::PointXYZ>);
-            pcl::fromROSMsg(pc,*pc_ptr);
-                //Option: Median filter for PC smoothing
-//            pcl::MedianFilter<pcl::PointXYZ> median_filter;
-//            median_filter.setWindowSize(11);
-//            median_filter.setInputCloud(pc_ptr);
-//            median_filter.applyFilter(*pc_median_ptr);
+            PointCloudXYZ::Ptr pc_ptr(new PointCloudXYZ);
+            pcl::fromROSMsg(*msg_pc2,*pc_ptr);
+
+            //Get LINEMOD source image
+            vector<Mat> sources;
+            rosMsgs_to_linemodSources(msg_rgb,msg_depth,sources);
+            Mat mat_rgb,mat_depth;
+            mat_rgb=sources[0];
+            mat_depth=sources[1];
+
+            Mat display=mat_rgb.clone();
 
             if(detector->classIds ().empty ())
             {
@@ -348,25 +348,14 @@ public:
                 return;
             }
 
-            //Convert point cloud to depth image
-            Mat mat_depth;
-            pc2depth(pc_ptr,mat_depth);
-
-            //Crop the image
-            cv::Rect crop(56,0,640,480);
-            Mat mat_rgb_crop=mat_rgb(crop);
-            Mat display=mat_rgb_crop;   //image for displaying results
-            Mat mat_depth_crop=mat_depth(crop);
-
-            //Perform the detection
-            std::vector<Mat> sources;
-            sources.push_back (mat_rgb_crop);
-            //sources.push_back (mat_depth_crop);
+            //Perform the LINEMOD detection
             std::vector<linemod::Match> matches;
-            double t;
-            t=cv::getTickCount ();
+            double t=cv::getTickCount ();
             detector->match (sources,threshold,matches,std::vector<String>(),noArray());
             t=(cv::getTickCount ()-t)/cv::getTickFrequency ();
+            cout<<"Time consumed by template matching: "<<t<<" s"<<endl;
+            cout<<"(1) LINEMOD Matching Result: "<< matches.size()<<endl;
+
 
             //Display all the results
 //            for(std::vector<linemod::Match>::iterator it= matches.begin();it != matches.end();it++){
@@ -382,20 +371,20 @@ public:
             rcd_voting(vote_row_col_step, vote_depth_step, matches,map_match, voting_height_cells, voting_width_cells);
 
             //Filter based on size of clusters
-            uchar thresh=3;
+            uchar thresh=5;
             cluster_filter(map_match,thresh);
 
             //Compute criteria for each cluster
                 //Output: Vecotor of ClusterData, each element of which contains index, score, flag of checking.
             vector<ClusterData> cluster_data;
             t=cv::getTickCount ();
-            cluster_scoring(map_match,mat_depth_crop,cluster_data);
+            cluster_scoring(map_match,mat_depth,cluster_data);
             t=(cv::getTickCount ()-t)/cv::getTickFrequency ();
             cout<<"Time consumed by scroing: "<<t<<endl;
             int p=0;
 
             //Non-maxima suppression
-            nonMaximaSuppression(cluster_data,10,map_match);
+            nonMaximaSuppression(cluster_data,5,map_match);
 
             //Pose average
             t=cv::getTickCount ();
@@ -403,7 +392,7 @@ public:
             t=(cv::getTickCount ()-t)/cv::getTickFrequency ();
             cout<<"Time consumed by pose clustering: "<<t<<endl;
 
-            vizResultPclViewer(cluster_data,pc_ptr);
+            //vizResultPclViewer(cluster_data,pc_ptr);
 
             //Pose refinement
             t=cv::getTickCount ();
@@ -673,7 +662,7 @@ public:
          }
 
          void cluster_scoring(std::map<std::vector<int>, std::vector<linemod::Match> >& map_match,Mat& depth_img,std::vector<ClusterData>& cluster_data)
-         {             
+         {
              std::map<std::vector<int>, std::vector<linemod::Match> >::iterator it_map= map_match.begin();
              for(;it_map!=map_match.end();++it_map)
              {
@@ -1116,7 +1105,7 @@ public:
                  int x=it->rect.x+it->rect.width/2;
                  int y=it->rect.y+it->rect.height/2;
                  //Add offset to x due to previous cropping operation
-                 x+=56;
+                 x+=0;
                  pcl::PointXYZ obj_center =pc->at(x,y);
 
                  //Deal with the situation that there is a hole in ROI or in the model pointcloud during rendering
@@ -1170,7 +1159,7 @@ public:
                      for(int jj=0;jj<pc_cv.cols;++jj)
                      {
                             double* data =row_ptr+jj*3;
-                            //cout<<" "<<data[0]<<" "<<data[1]<<" "<<data[2]<<endl;                            
+                            //cout<<" "<<data[0]<<" "<<data[1]<<" "<<data[2]<<endl;
                             it->model_pc->at(jj,ii).x=data[0];
                             it->model_pc->at(jj,ii).y=data[1];
                             it->model_pc->at(jj,ii).z=data[2];
@@ -1200,19 +1189,17 @@ public:
          {
              for(vector<ClusterData>::iterator it = cluster_data.begin();it!=cluster_data.end();++it)
              {
-                //Get scene point cloud indices
+                //Get point cloud indices
                  pcl::PointIndices::Ptr indices(new pcl::PointIndices);
                  indices=getPointCloudIndices(it);
-                //Extract scene pc according to indices
+                //Extract pc according to indices
                  PointCloudXYZ::Ptr scene_pc(new PointCloudXYZ);
                  extractPointsByIndices(indices,pc,scene_pc,false,false);
 
                  //Viz for test
-                 pcl::visualization::PCLVisualizer v("view_test");
-                 v.addPointCloud(scene_pc,"scene");
-                 pcl::visualization::PointCloudColorHandlerRandom<pcl::PointXYZ> color(it->model_pc);
-                 v.addPointCloud(it->model_pc,color,"model");
-                 v.spin();
+//                 pcl::visualization::PCLVisualizer v("view_test");
+//                 v.addPointCloud(scene_pc,"scene");
+//                 v.spin();
 
                  //Remove Nan points
                  vector<int> index;
@@ -1223,11 +1210,9 @@ public:
                  //Statistical outlier removal
                  statisticalOutlierRemoval(scene_pc,50,1.0);
 
-                 euclidianClustering(scene_pc,0.01);
-
                  //Viz for test
-                 v.updatePointCloud(scene_pc,"scene");
-                 v.spin();
+//                 v.updatePointCloud(scene_pc,"scene");
+//                 v.spin();
 
                  //Coarse alignment
                  icp.setInputSource (it->model_pc);
@@ -1239,7 +1224,7 @@ public:
                  Eigen::Matrix4f tf_mat = icp.getFinalTransformation();
                  Eigen::Matrix4d tf_mat_d=tf_mat.cast<double>();
                  Eigen::Affine3d tf(tf_mat_d);
-                 it->pose=tf*it->pose;                 
+                 it->pose=tf*it->pose;
 
                  //Fine alignment 1
                  icp.setMaximumIterations(20);
@@ -1257,7 +1242,7 @@ public:
 
                  //Fine alignment 2
                  icp.setMaximumIterations(10);
-                 icp.setMaxCorrespondenceDistance(0.005);
+                 icp.setMaxCorrespondenceDistance(0.01);
                  icp.setInputSource (it->model_pc);
                  icp.setInputTarget (scene_pc);
                  icp.align (*(it->model_pc));
@@ -1268,10 +1253,6 @@ public:
                  tf_mat_d=tf_mat.cast<double>();
                  tf.matrix()=tf_mat_d;
                  it->pose=tf*it->pose;
-
-                 //Viz test
-                 v.updatePointCloud(it->model_pc,color,"model");
-                 v.spin();
 
                  int p=0;
              }
@@ -1306,7 +1287,7 @@ public:
                     //Notice: the coordinate of input params "rect" is w.r.t cropped image, so the offset is needed to transform coordinate
                     int x_cropped=j+col_offset;
                     int y_cropped=i+row_offset;
-                    int x_uncropped=x_cropped+56;
+                    int x_uncropped=x_cropped+0;
                     int y_uncropped=y_cropped;
                     //Attention: image width of ensenso: 752, image height of ensenso: 480
                     int index=y_uncropped*752+x_uncropped;
@@ -1334,7 +1315,7 @@ public:
                         x_cropped=j+it->rect.x;
                         y_cropped=i+it->rect.y;
                         //Attention: image width of ensenso: 752, image height of ensenso: 480
-                        int index=y_cropped*752+x_cropped+56;
+                        int index=y_cropped*752+x_cropped+0;
                         indices->indices.push_back(index);
                     }
                 }
@@ -1449,6 +1430,46 @@ public:
             pcl::copyPointCloud(*pts_filtered,*pts);
         }
 
+        void rosMsgs_to_linemodSources(const sensor_msgs::ImageConstPtr& msg_rgb , const sensor_msgs::ImageConstPtr& msg_depth,vector<Mat>& sources)
+        {
+            //Convert ros msg to OpenCV mat
+            cv_bridge::CvImagePtr img_ptr_rgb;
+            cv_bridge::CvImagePtr img_ptr_depth;
+            Mat mat_rgb;
+            Mat mat_depth;
+
+            try{
+                 img_ptr_depth = cv_bridge::toCvCopy(*msg_depth);
+             }
+             catch (cv_bridge::Exception& e)
+             {
+                 ROS_ERROR("cv_bridge exception:  %s", e.what());
+                 return;
+             }
+
+             try{
+                 img_ptr_rgb = cv_bridge::toCvCopy(*msg_rgb, sensor_msgs::image_encodings::BGR8);
+                 mat_rgb=img_ptr_rgb->image.clone();
+             }
+             catch (cv_bridge::Exception& e)
+             {
+                 ROS_ERROR("cv_bridge exception:  %s", e.what());
+                 return;
+             }
+
+             if(img_ptr_depth->image.depth ()==CV_32F)
+             {
+                img_ptr_depth->image.convertTo (mat_depth,CV_16UC1,1000.0);
+             }
+             else
+             {
+                 img_ptr_depth->image.copyTo(mat_depth);
+             }
+
+             sources.push_back(mat_rgb);
+             sources.push_back(mat_depth);
+        }
+
 };
 
 int main(int argc,char** argv)
@@ -1478,32 +1499,6 @@ int main(int argc,char** argv)
 
     linemod_detect detector(linemod_template_path,renderer_param_path,model_stl_path,
                             detect_score_th,icp_max_iter,icp_tr_epsilon,icp_fitness_th,icp_maxCorresDist,clustering_step,orientation_clustering_step);
-
-    ensenso::RegistImage srv;
-    srv.request.is_rgb=true;
-    ros::Rate loop(1);
-
-    string img_path=argv[11];
-    string pc_path=argv[12];
-    ros::Time now =ros::Time::now();
-    Mat cv_img=imread(img_path,IMREAD_COLOR);
-    cv_bridge::CvImagePtr bridge_img_ptr(new cv_bridge::CvImage);
-    bridge_img_ptr->image=cv_img;
-    bridge_img_ptr->encoding="bgr8";
-    bridge_img_ptr->header.stamp=now;
-    srv.response.image = *bridge_img_ptr->toImageMsg();
-
-    PointCloudXYZ::Ptr pc(new PointCloudXYZ);
-    pcl::io::loadPCDFile(pc_path,*pc);
-    pcl::toROSMsg(*pc,srv.response.pointcloud);
-    srv.response.pointcloud.header.frame_id="/camera_link";
-    srv.response.pointcloud.header.stamp=now;
-
-    while(ros::ok())
-    {
-        detector.detect_cb(srv.response.image,srv.response.pointcloud,srv.request.is_rgb);
-        loop.sleep();
-    }
 
     ros::spin ();
 }
