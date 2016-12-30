@@ -318,8 +318,6 @@ public:
 
         void detect_cb(const sensor_msgs::ImageConstPtr& msg_rgb , const sensor_msgs::ImageConstPtr& msg_depth,const sensor_msgs::PointCloud2ConstPtr& msg_pc2)
         {
-            //Wait for a little bit
-            sleep(1);
             //Read camera intrinsic params
             if(!is_K_read)
                 return;
@@ -371,7 +369,7 @@ public:
             rcd_voting(vote_row_col_step, vote_depth_step, matches,map_match, voting_height_cells, voting_width_cells);
 
             //Filter based on size of clusters
-            uchar thresh=5;
+            uchar thresh=0;
             cluster_filter(map_match,thresh);
 
             //Compute criteria for each cluster
@@ -1189,72 +1187,85 @@ public:
          {
              for(vector<ClusterData>::iterator it = cluster_data.begin();it!=cluster_data.end();++it)
              {
-                //Get point cloud indices
-                 pcl::PointIndices::Ptr indices(new pcl::PointIndices);
-                 indices=getPointCloudIndices(it);
-                //Extract pc according to indices
-                 PointCloudXYZ::Ptr scene_pc(new PointCloudXYZ);
-                 extractPointsByIndices(indices,pc,scene_pc,false,false);
+                 //Get scene point cloud indices
+                  pcl::PointIndices::Ptr indices(new pcl::PointIndices);
+                  indices=getPointCloudIndices(it);
+                 //Extract scene pc according to indices
+                  PointCloudXYZ::Ptr scene_pc(new PointCloudXYZ);
+                  extractPointsByIndices(indices,pc,scene_pc,false,false);
 
-                 //Viz for test
-//                 pcl::visualization::PCLVisualizer v("view_test");
-//                 v.addPointCloud(scene_pc,"scene");
-//                 v.spin();
+                  //Viz for test
+                  pcl::visualization::PCLVisualizer v("view_test");
+                  v.addPointCloud(scene_pc,"scene");
+                  pcl::visualization::PointCloudColorHandlerRandom<pcl::PointXYZ> color(it->model_pc);
+                  v.addPointCloud(it->model_pc,color,"model");
+                  v.spin();
 
-                 //Remove Nan points
-                 vector<int> index;
-                 it->model_pc->is_dense=false;
-                 pcl::removeNaNFromPointCloud(*(it->model_pc),*(it->model_pc),index);
-                 pcl::removeNaNFromPointCloud(*scene_pc,*scene_pc,index);
+                  //Remove Nan points
+                  vector<int> index;
+                  it->model_pc->is_dense=false;
+                  pcl::removeNaNFromPointCloud(*(it->model_pc),*(it->model_pc),index);
+                  pcl::removeNaNFromPointCloud(*scene_pc,*scene_pc,index);
 
-                 //Statistical outlier removal
-                 statisticalOutlierRemoval(scene_pc,50,1.0);
+                  //Statistical outlier removal
+                  statisticalOutlierRemoval(scene_pc,50,1.0);
 
-                 //Viz for test
-//                 v.updatePointCloud(scene_pc,"scene");
-//                 v.spin();
+                  euclidianClustering(scene_pc,0.01);
 
-                 //Coarse alignment
-                 icp.setInputSource (it->model_pc);
-                 icp.setInputTarget (scene_pc);
-                 icp.align (*(it->model_pc));
-                 if(!icp.hasConverged())
-                     cout<<"ICP cannot converge"<<endl;
-                 //Update pose
-                 Eigen::Matrix4f tf_mat = icp.getFinalTransformation();
-                 Eigen::Matrix4d tf_mat_d=tf_mat.cast<double>();
-                 Eigen::Affine3d tf(tf_mat_d);
-                 it->pose=tf*it->pose;
+ //                 float leaf_size=0.002;
+ //                 voxelGridFilter(scene_pc,leaf_size);
+ //                 voxelGridFilter(it->model_pc,leaf_size);
 
-                 //Fine alignment 1
-                 icp.setMaximumIterations(20);
-                 icp.setMaxCorrespondenceDistance(0.02);
-                 icp.setInputSource (it->model_pc);
-                 icp.setInputTarget (scene_pc);
-                 icp.align (*(it->model_pc));
-                 if(!icp.hasConverged())
-                     cout<<"ICP cannot converge"<<endl;
-                 //Update pose
-                 tf_mat = icp.getFinalTransformation();
-                 tf_mat_d=tf_mat.cast<double>();
-                 tf.matrix()=tf_mat_d;
-                 it->pose=tf*it->pose;
+                  //Viz for test
+                  v.updatePointCloud(scene_pc,"scene");
+                  v.updatePointCloud(it->model_pc,color,"model");
+                  v.spin();
 
-                 //Fine alignment 2
-                 icp.setMaximumIterations(10);
-                 icp.setMaxCorrespondenceDistance(0.01);
-                 icp.setInputSource (it->model_pc);
-                 icp.setInputTarget (scene_pc);
-                 icp.align (*(it->model_pc));
-                 if(!icp.hasConverged())
-                     cout<<"ICP cannot converge"<<endl;
-                 //Update pose
-                 tf_mat = icp.getFinalTransformation();
-                 tf_mat_d=tf_mat.cast<double>();
-                 tf.matrix()=tf_mat_d;
-                 it->pose=tf*it->pose;
+                  //Coarse alignment
+                  icp.setInputSource (it->model_pc);
+                  icp.setInputTarget (scene_pc);
+                  icp.align (*(it->model_pc));
+                  if(!icp.hasConverged())
+                      cout<<"ICP cannot converge"<<endl;
+                  //Update pose
+                  Eigen::Matrix4f tf_mat = icp.getFinalTransformation();
+                  Eigen::Matrix4d tf_mat_d=tf_mat.cast<double>();
+                  Eigen::Affine3d tf(tf_mat_d);
+                  it->pose=tf*it->pose;
 
-                 int p=0;
+                  //Fine alignment 1
+                  icp.setMaximumIterations(20);
+                  icp.setMaxCorrespondenceDistance(0.02);
+                  icp.setInputSource (it->model_pc);
+                  icp.setInputTarget (scene_pc);
+                  icp.align (*(it->model_pc));
+                  if(!icp.hasConverged())
+                      cout<<"ICP cannot converge"<<endl;
+                  //Update pose
+                  tf_mat = icp.getFinalTransformation();
+                  tf_mat_d=tf_mat.cast<double>();
+                  tf.matrix()=tf_mat_d;
+                  it->pose=tf*it->pose;
+
+                  //Fine alignment 2
+                  icp.setMaximumIterations(10);
+                  icp.setMaxCorrespondenceDistance(0.005);
+                  icp.setInputSource (it->model_pc);
+                  icp.setInputTarget (scene_pc);
+                  icp.align (*(it->model_pc));
+                  if(!icp.hasConverged())
+                      cout<<"ICP cannot converge"<<endl;
+                  //Update pose
+                  tf_mat = icp.getFinalTransformation();
+                  tf_mat_d=tf_mat.cast<double>();
+                  tf.matrix()=tf_mat_d;
+                  it->pose=tf*it->pose;
+
+                  //Viz test
+                  v.updatePointCloud(it->model_pc,color,"model");
+                  v.spin();
+
+                  int p=0;
              }
          }
 
@@ -1290,7 +1301,7 @@ public:
                     int x_uncropped=x_cropped+0;
                     int y_uncropped=y_cropped;
                     //Attention: image width of ensenso: 752, image height of ensenso: 480
-                    int index=y_uncropped*752+x_uncropped;
+                    int index=y_uncropped*640+x_uncropped;
                     indices->indices.push_back(index);
 
                 }
@@ -1315,7 +1326,7 @@ public:
                         x_cropped=j+it->rect.x;
                         y_cropped=i+it->rect.y;
                         //Attention: image width of ensenso: 752, image height of ensenso: 480
-                        int index=y_cropped*752+x_cropped+0;
+                        int index=y_cropped*640+x_cropped+0;
                         indices->indices.push_back(index);
                     }
                 }
@@ -1407,7 +1418,7 @@ public:
             std::vector<pcl::PointIndices> cluster_indices;
             pcl::EuclideanClusterExtraction<pcl::PointXYZ> ec;
             ec.setClusterTolerance (dist); // 1cm
-            ec.setMinClusterSize (50);
+            ec.setMinClusterSize (10);
             ec.setMaxClusterSize (25000);
             ec.setSearchMethod (tree);
             ec.setInputCloud (pts);

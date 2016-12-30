@@ -44,6 +44,7 @@
 #include <pcl/common/common.h>
 #include <pcl_conversions/pcl_conversions.h>
 #include <pcl/filters/median_filter.h>
+#include <pcl/filters/voxel_grid.h>
 #include <pcl/segmentation/extract_clusters.h>
 #include <pcl/filters/statistical_outlier_removal.h>
 
@@ -158,6 +159,11 @@ bool sortOrienCluster(const vector<Eigen::Matrix3d>& cluster1,const vector<Eigen
 }
 
 bool sortIdCluster(const vector<int>& cluster1,const vector<int>& cluster2)
+{
+    return(cluster1.size()>cluster2.size());
+}
+
+bool sortXyCluster(const vector<pair<int,int> >& cluster1,const vector<pair<int,int> >& cluster2)
 {
     return(cluster1.size()>cluster2.size());
 }
@@ -382,7 +388,7 @@ public:
             rcd_voting(vote_row_col_step, vote_depth_step, matches,map_match, voting_height_cells, voting_width_cells);
 
             //Filter based on size of clusters
-            uchar thresh=3;
+            uchar thresh=10;
             cluster_filter(map_match,thresh);
 
             //Compute criteria for each cluster
@@ -984,6 +990,7 @@ public:
                  //Perform clustering
                  vector<vector<Eigen::Matrix3d> > orienClusters;
                  vector<vector<int> > idClusters;
+                 vector<vector<pair<int ,int> > > xyClusters;
                  for(vector<linemod::Match>::iterator it2=it->matches.begin();it2!=it->matches.end();++it2)
                  {
                      //Get rotation
@@ -1001,6 +1008,7 @@ public:
                              found_cluster=true;
                              orienClusters[i].push_back(R);
                              idClusters[i].push_back(it2->template_id);
+                             xyClusters[i].push_back(pair<int ,int>(it2->x,it2->y));
                              break;
                          }
                      }
@@ -1015,17 +1023,21 @@ public:
                          vector<int> new_cluster_;
                          new_cluster_.push_back(it2->template_id);
                          idClusters.push_back(new_cluster_);
+
+                         vector<pair<int,int> > new_xy_cluster;
+                         new_xy_cluster.push_back(pair<int,int>(it2->x,it2->y));
+                         xyClusters.push_back(new_xy_cluster);
                      }
                  }
                  //Sort cluster according to the number of poses
                  std::sort(orienClusters.begin(),orienClusters.end(),sortOrienCluster);
                  std::sort(idClusters.begin(),idClusters.end(),sortIdCluster);
+                 std::sort(xyClusters.begin(),xyClusters.end(),sortXyCluster);
 
                  //Test display all the poses in 1st cluster
 //                 for(int i=0;i<idClusters[0].size();++i)
 //                 {
 //                     int ID=idClusters[0][i];
-
 //                     //get the pose
 //                     cv::Matx33d R_match = Rs_[ID].clone();// rotation of the object w.r.t to the view point
 //                     cv::Vec3d T_match = Ts_[ID].clone();//the translation of the camera with respect to the current view point
@@ -1038,7 +1050,6 @@ public:
 //                     renderer_iterator_->renderDepthOnly(depth_ref_, mask, rect, -T_match, up);
 //                     imshow("mask",mask);
 //                     waitKey(0);
-
 //                 }
 
                 //Test average all poses in 1st cluster
@@ -1048,6 +1059,7 @@ public:
                  double Trans_aver=0.0;
                  vector<Eigen::Matrix3d>::iterator iter=orienClusters[0].begin();
                  bool is_center_hole=false;
+                 int X=0; int Y=0;
                  for(int i=0;iter!=orienClusters[0].end();++iter,++i)
                  {
                      //get rotation
@@ -1062,6 +1074,9 @@ public:
                      D_aver+=Distances_[idClusters[0][i]];
                      //Get translation
                      Trans_aver+=Obj_origin_dists[idClusters[0][i]];
+                     //Get match position
+                     X+=xyClusters[0][i].first;
+                     Y+=xyClusters[0][i].second;
 
                      if(fabs(Distances_[idClusters[0][i]]-Obj_origin_dists[idClusters[0][i]])<0.001)
                      {
@@ -1074,6 +1089,8 @@ public:
                  T_aver/=orienClusters[0].size();
                  D_aver/=orienClusters[0].size();
                  Trans_aver/=orienClusters[0].size();
+                 X/=orienClusters[0].size();
+                 Y/=orienClusters[0].size();
                 //normalize the averaged quaternion
                  Eigen::Quaterniond quat=Eigen::Quaterniond(R_aver).normalized();
                  cv::Mat R_mat;
@@ -1113,14 +1130,16 @@ public:
                  it->pose.linear()=R_eig;
 
                  //Save position
-                 int x=it->rect.x+it->rect.width/2;
-                 int y=it->rect.y+it->rect.height/2;
+//                 int x=it->rect.x+it->rect.width/2;
+//                 int y=it->rect.y+it->rect.height/2;
+                 int x=X+rect.width/2;
+                 int y=Y+rect.height/2;
                  //Add offset to x due to previous cropping operation
                  x+=56;
-                 pcl::PointXYZ obj_center =pc->at(x,y);
+                 pcl::PointXYZ bbox_center =pc->at(x,y);
 
                  //Deal with the situation that there is a hole in ROI or in the model pointcloud during rendering
-                 if(pcl_isnan(obj_center.x) || pcl_isnan(obj_center.y) || pcl_isnan(obj_center.z) || is_center_hole)
+                 if(pcl_isnan(bbox_center.x) || pcl_isnan(bbox_center.y) || pcl_isnan(bbox_center.z) || is_center_hole)
                  {
                      PointCloudXYZ::Ptr pts_tmp(new PointCloudXYZ());
                      pcl::PointIndices::Ptr indices_tmp(new pcl::PointIndices());
@@ -1135,9 +1154,9 @@ public:
                      if(pcl::compute3DCentroid<pcl::PointXYZ,double>(*pts_tmp,centroid)!=0)
                      {
                          //Replace the Nan center point with centroid
-                         obj_center.x=centroid[0];
-                         obj_center.y=centroid[1];
-                         obj_center.z=centroid[2];
+                         bbox_center.x=centroid[0];
+                         bbox_center.y=centroid[1];
+                         bbox_center.z=centroid[2];
                      }
                      else
                      {
@@ -1148,10 +1167,10 @@ public:
                  //Notice: No hole in the center
                  if(!is_center_hole)
                  {
-                     obj_center.z+=D_aver;
+                     bbox_center.z+=D_aver;
                  }
-                 it->position=cv::Vec3d(obj_center.x,obj_center.y,obj_center.z);
-                 it->pose.translation()<< obj_center.x,obj_center.y,obj_center.z;
+                 it->position=cv::Vec3d(bbox_center.x,bbox_center.y,bbox_center.z);
+                 it->pose.translation()<< bbox_center.x,bbox_center.y,bbox_center.z;
 
                  //Get render point cloud
                  Mat pc_cv;
@@ -1170,7 +1189,7 @@ public:
                      for(int jj=0;jj<pc_cv.cols;++jj)
                      {
                             double* data =row_ptr+jj*3;
-                            //cout<<" "<<data[0]<<" "<<data[1]<<" "<<data[2]<<endl;                            
+                            //cout<<" "<<data[0]<<" "<<data[1]<<" "<<data[2]<<endl;
                             it->model_pc->at(jj,ii).x=data[0];
                             it->model_pc->at(jj,ii).y=data[1];
                             it->model_pc->at(jj,ii).z=data[2];
@@ -1179,10 +1198,12 @@ public:
                  }
 
                  //Transform the pc
-                 //pcl::PointXYZ pt_scene(obj_center.x,obj_center.y,obj_center.z-D_aver);
-                 //pcl::PointXYZ pt_model=it->model_pc->at(it->model_pc->width/2,it->model_pc->height/2);
-                 pcl::PointXYZ pt_scene(obj_center.x,obj_center.y,obj_center.z);
-                 pcl::PointXYZ pt_model(0.0,0.0,Trans_aver);
+//                 pcl::PointXYZ pt_scene(bbox_center.x,bbox_center.y,bbox_center.z-D_aver);
+//                 pcl::PointXYZ pt_model=it->model_pc->at(it->model_pc->width/2,it->model_pc->height/2);
+
+                 pcl::PointXYZ pt_scene(bbox_center.x,bbox_center.y,bbox_center.z);
+                 pcl::PointXYZ pt_model(0,0,Trans_aver);
+
                  pcl::PointXYZ translation(pt_scene.x -pt_model.x,pt_scene.y -pt_model.y,pt_scene.z -pt_model.z);
                  Eigen::Affine3d transform =Eigen::Affine3d::Identity();
                  transform.translation()<<translation.x, translation.y, translation.z;
@@ -1225,8 +1246,13 @@ public:
 
                  euclidianClustering(scene_pc,0.01);
 
+//                 float leaf_size=0.002;
+//                 voxelGridFilter(scene_pc,leaf_size);
+//                 voxelGridFilter(it->model_pc,leaf_size);
+
                  //Viz for test
                  v.updatePointCloud(scene_pc,"scene");
+                 v.updatePointCloud(it->model_pc,color,"model");
                  v.spin();
 
                  //Coarse alignment
@@ -1446,6 +1472,16 @@ public:
             sor.setStddevMulThresh (stdDevMulThresh);
             sor.filter (*pts_filtered);
             //pts.swap(pts_filtered);
+            pcl::copyPointCloud(*pts_filtered,*pts);
+        }
+
+        void voxelGridFilter(PointCloudXYZ::Ptr pts, float leaf_size)
+        {
+            PointCloudXYZ::Ptr pts_filtered(new PointCloudXYZ);
+            pcl::VoxelGrid<pcl::PointXYZ> vg;
+            vg.setInputCloud(pts);
+            vg.setLeafSize(leaf_size,leaf_size,leaf_size);
+            vg.filter(*pts_filtered);
             pcl::copyPointCloud(*pts_filtered,*pts);
         }
 
