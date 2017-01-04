@@ -158,6 +158,7 @@ add_executable(linemod_split_renderer_node src/linemod_split_renderer.cpp)
 add_executable(linemod_detect_node src/linemod_detect.cpp src/linemod_icp.cpp src/linemod_pointcloud.cpp)# src/db_linemod.cpp)
 add_executable(linemod_ensenso_detect_node src/linemod_ensenso_detect.cpp src/linemod_icp.cpp src/linemod_pointcloud.cpp)
 add_executable(linemod_carmine_detect_node src/linemod_carmine_detect.cpp src/linemod_icp.cpp src/linemod_pointcloud.cpp)
+add_executable(linemod_dataset_detect_node src/linemod_dataset_detect.cpp src/linemod_icp.cpp src/linemod_pointcloud.cpp)
 
 ## Add cmake target dependencies of the executable
 ## same as for the library above
@@ -198,6 +199,12 @@ target_link_libraries(linemod_ensenso_detect_node
 )
 
 target_link_libraries(linemod_carmine_detect_node
+  ${catkin_LIBRARIES}
+  ${OpenCV_LIBRARIES}
+  ${PCL_LIBRARIES}
+)
+
+target_link_libraries(linemod_dataset_detect_node
   ${catkin_LIBRARIES}
   ${OpenCV_LIBRARIES}
   ${PCL_LIBRARIES}
