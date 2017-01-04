@@ -39,6 +39,7 @@
 #include <pcl/visualization/pcl_visualizer.h>
 #include <pcl/point_types.h>
 #include <pcl/registration/icp.h>
+#include <pcl/registration/icp_nl.h>
 #include <pcl/filters/filter.h>
 #include <pcl/filters/extract_indices.h>
 #include <pcl/common/common.h>
@@ -1244,7 +1245,116 @@ public:
                  //Statistical outlier removal
                  statisticalOutlierRemoval(scene_pc,50,1.0);
 
-                 euclidianClustering(scene_pc,0.01);
+                 //euclidianClustering(scene_pc,0.01);
+
+//                 float leaf_size=0.002;
+//                 voxelGridFilter(scene_pc,leaf_size);
+//                 voxelGridFilter(it->model_pc,leaf_size);
+
+                 //Coarse alignment
+                 icp.setRANSACOutlierRejectionThreshold(0.02);
+                 icp.setInputSource (it->model_pc);
+                 icp.setInputTarget (scene_pc);
+                 icp.align (*(it->model_pc));
+                 if(!icp.hasConverged())
+                 {
+                     cout<<"ICP cannot converge"<<endl;
+                 }
+                 else{
+                     cout<<"ICP fitness score of coarse alignment: "<<icp.getFitnessScore()<<endl;
+                 }
+                 //Update pose
+                 Eigen::Matrix4f tf_mat = icp.getFinalTransformation();
+                 Eigen::Matrix4d tf_mat_d=tf_mat.cast<double>();
+                 Eigen::Affine3d tf(tf_mat_d);
+                 it->pose=tf*it->pose;
+
+                 //Viz for test
+                 v.updatePointCloud(scene_pc,"scene");
+                 v.updatePointCloud(it->model_pc,color,"model");
+                 v.spin();
+
+                 //Fine alignment 1
+                 icp.setEuclideanFitnessEpsilon(1e-4);
+                 icp.setRANSACOutlierRejectionThreshold(0.01);
+                 icp.setMaximumIterations(20);
+                 icp.setMaxCorrespondenceDistance(0.01);
+                 icp.setInputSource (it->model_pc);
+                 icp.setInputTarget (scene_pc);
+                 icp.align (*(it->model_pc));
+                 if(!icp.hasConverged())
+                 {
+                     cout<<"ICP cannot converge"<<endl;
+                 }
+                 else{
+                     cout<<"ICP fitness score of fine alignment 1: "<<icp.getFitnessScore()<<endl;
+                 }
+                 //Update pose
+                 tf_mat = icp.getFinalTransformation();
+                 tf_mat_d=tf_mat.cast<double>();
+                 tf.matrix()=tf_mat_d;
+                 it->pose=tf*it->pose;
+
+                 //Viz for test
+                 v.updatePointCloud(scene_pc,"scene");
+                 v.updatePointCloud(it->model_pc,color,"model");
+                 v.spin();
+
+//                 //Fine alignment 2
+//                 icp.setRANSACOutlierRejectionThreshold(0.005);
+//                 icp.setMaximumIterations(10);
+//                 icp.setMaxCorrespondenceDistance(0.005);
+//                 icp.setInputSource (it->model_pc);
+//                 icp.setInputTarget (scene_pc);
+//                 icp.align (*(it->model_pc));
+//                 if(!icp.hasConverged())
+//                 {
+//                     cout<<"ICP cannot converge"<<endl;
+//                 }
+//                 else{
+//                     cout<<"ICP fitness score of fine alignment 2: "<<icp.getFitnessScore()<<endl;
+//                 }
+//                 //Update pose
+//                 tf_mat = icp.getFinalTransformation();
+//                 tf_mat_d=tf_mat.cast<double>();
+//                 tf.matrix()=tf_mat_d;
+//                 it->pose=tf*it->pose;
+
+//                 //Viz test
+//                 v.updatePointCloud(it->model_pc,color,"model");
+//                 v.spin();
+
+             }
+         }
+
+         void icpNonLinearPoseRefine(vector<ClusterData>& cluster_data,PointCloudXYZ::Ptr pc)
+         {
+             for(vector<ClusterData>::iterator it = cluster_data.begin();it!=cluster_data.end();++it)
+             {
+                //Get scene point cloud indices
+                 pcl::PointIndices::Ptr indices(new pcl::PointIndices);
+                 indices=getPointCloudIndices(it);
+                //Extract scene pc according to indices
+                 PointCloudXYZ::Ptr scene_pc(new PointCloudXYZ);
+                 extractPointsByIndices(indices,pc,scene_pc,false,false);
+
+                 //Viz for test
+                 pcl::visualization::PCLVisualizer v("view_test");
+                 v.addPointCloud(scene_pc,"scene");
+                 pcl::visualization::PointCloudColorHandlerRandom<pcl::PointXYZ> color(it->model_pc);
+                 v.addPointCloud(it->model_pc,color,"model");
+                 v.spin();
+
+                 //Remove Nan points
+                 vector<int> index;
+                 it->model_pc->is_dense=false;
+                 pcl::removeNaNFromPointCloud(*(it->model_pc),*(it->model_pc),index);
+                 pcl::removeNaNFromPointCloud(*scene_pc,*scene_pc,index);
+
+                 //Statistical outlier removal
+                 statisticalOutlierRemoval(scene_pc,50,1.0);
+
+                 //euclidianClustering(scene_pc,0.01);
 
 //                 float leaf_size=0.002;
 //                 voxelGridFilter(scene_pc,leaf_size);
@@ -1255,42 +1365,51 @@ public:
                  v.updatePointCloud(it->model_pc,color,"model");
                  v.spin();
 
+                 //Instantiate a non-linear ICP object
+                 pcl::IterativeClosestPointNonLinear<pcl::PointXYZ,pcl::PointXYZ> icp_;
+                 icp_.setMaxCorrespondenceDistance(0.05);
+                 icp_.setMaximumIterations(50);
+                 icp_.setRANSACOutlierRejectionThreshold(0.02);
+                 icp_.setTransformationEpsilon (1e-8);
+                 icp_.setEuclideanFitnessEpsilon (0.002);
+
                  //Coarse alignment
-                 icp.setInputSource (it->model_pc);
-                 icp.setInputTarget (scene_pc);
-                 icp.align (*(it->model_pc));
-                 if(!icp.hasConverged())
+                 icp_.setInputSource (it->model_pc);
+                 icp_.setInputTarget (scene_pc);
+                 icp_.align (*(it->model_pc));
+                 if(!icp_.hasConverged())
                      cout<<"ICP cannot converge"<<endl;
                  //Update pose
-                 Eigen::Matrix4f tf_mat = icp.getFinalTransformation();
+                 Eigen::Matrix4f tf_mat = icp_.getFinalTransformation();
                  Eigen::Matrix4d tf_mat_d=tf_mat.cast<double>();
                  Eigen::Affine3d tf(tf_mat_d);
-                 it->pose=tf*it->pose;                 
+                 it->pose=tf*it->pose;
 
                  //Fine alignment 1
-                 icp.setMaximumIterations(20);
-                 icp.setMaxCorrespondenceDistance(0.02);
-                 icp.setInputSource (it->model_pc);
-                 icp.setInputTarget (scene_pc);
-                 icp.align (*(it->model_pc));
-                 if(!icp.hasConverged())
+                 icp_.setRANSACOutlierRejectionThreshold(0.01);
+                 icp_.setMaximumIterations(20);
+                 icp_.setMaxCorrespondenceDistance(0.02);
+                 icp_.setInputSource (it->model_pc);
+                 icp_.setInputTarget (scene_pc);
+                 icp_.align (*(it->model_pc));
+                 if(!icp_.hasConverged())
                      cout<<"ICP cannot converge"<<endl;
                  //Update pose
-                 tf_mat = icp.getFinalTransformation();
+                 tf_mat = icp_.getFinalTransformation();
                  tf_mat_d=tf_mat.cast<double>();
                  tf.matrix()=tf_mat_d;
                  it->pose=tf*it->pose;
 
                  //Fine alignment 2
-                 icp.setMaximumIterations(10);
-                 icp.setMaxCorrespondenceDistance(0.005);
-                 icp.setInputSource (it->model_pc);
-                 icp.setInputTarget (scene_pc);
-                 icp.align (*(it->model_pc));
-                 if(!icp.hasConverged())
+                 icp_.setMaximumIterations(10);
+                 icp_.setMaxCorrespondenceDistance(0.005);
+                 icp_.setInputSource (it->model_pc);
+                 icp_.setInputTarget (scene_pc);
+                 icp_.align (*(it->model_pc));
+                 if(!icp_.hasConverged())
                      cout<<"ICP cannot converge"<<endl;
                  //Update pose
-                 tf_mat = icp.getFinalTransformation();
+                 tf_mat = icp_.getFinalTransformation();
                  tf_mat_d=tf_mat.cast<double>();
                  tf.matrix()=tf_mat_d;
                  it->pose=tf*it->pose;
@@ -1299,8 +1418,12 @@ public:
                  v.updatePointCloud(it->model_pc,color,"model");
                  v.spin();
 
-                 int p=0;
              }
+         }
+
+         void icpWithNormalPoseRefine()
+         {
+
          }
 
         bool orientationCompare(Eigen::Matrix3d& orien1,Eigen::Matrix3d& orien2,double thresh)

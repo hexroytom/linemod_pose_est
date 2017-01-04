@@ -148,8 +148,13 @@ include_directories(
 
 ## Declare a C++ executable
 # add_executable(linemod_pose_estimation_node src/linemod_pose_estimation_node.cpp)
+
+#--------Renderer--------#
 add_executable(linemod_renderer_node src/test_renderer.cpp)
 add_executable(linemod_image_renderer_node src/renderer_only_image.cpp)
+add_executable(linemod_split_renderer_node src/linemod_split_renderer.cpp)
+
+#--------Detector--------#
 add_executable(linemod_detect_node src/linemod_detect.cpp src/linemod_icp.cpp src/linemod_pointcloud.cpp)# src/db_linemod.cpp)
 add_executable(linemod_ensenso_detect_node src/linemod_ensenso_detect.cpp src/linemod_icp.cpp src/linemod_pointcloud.cpp)
 add_executable(linemod_carmine_detect_node src/linemod_carmine_detect.cpp src/linemod_icp.cpp src/linemod_pointcloud.cpp)
@@ -170,6 +175,12 @@ target_link_libraries(linemod_renderer_node
 )
 
 target_link_libraries(linemod_image_renderer_node
+  ${catkin_LIBRARIES}
+  ${OpenCV_LIBRARIES}
+  ${object_recognition_renderer_LIBRARIES}
+)
+
+target_link_libraries(linemod_split_renderer_node
   ${catkin_LIBRARIES}
   ${OpenCV_LIBRARIES}
   ${object_recognition_renderer_LIBRARIES}

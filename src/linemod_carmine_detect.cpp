@@ -360,6 +360,8 @@ public:
 //                std::vector<cv::linemod::Template> templates=detector->getTemplates(it->class_id, it->template_id);
 //                drawResponse(templates, 1, display,cv::Point(it->x,it->y), 2);
 //            }
+//            imshow("result",display);
+//            waitKey(0);
 
             //Clustering based on Row Col Depth
             std::map<std::vector<int>, std::vector<linemod::Match> > map_match;
@@ -369,8 +371,22 @@ public:
             rcd_voting(vote_row_col_step, vote_depth_step, matches,map_match, voting_height_cells, voting_width_cells);
 
             //Filter based on size of clusters
-            uchar thresh=0;
+            uchar thresh=3;
             cluster_filter(map_match,thresh);
+
+            //Display
+            std::map<std::vector<int>, std::vector<linemod::Match> >::iterator it_map=map_match.begin();
+            for(;it_map!=map_match.end();++it_map)
+            {
+                for(std::vector<linemod::Match>::iterator it_vec= it_map->second.begin();it_vec != it_map->second.end();it_vec++){
+                    std::vector<cv::linemod::Template> templates=detector->getTemplates(it_vec->class_id, it_vec->template_id);
+                    drawResponse(templates, 1, display,cv::Point(it_vec->x,it_vec->y), 2);
+                }
+
+            }
+
+            imshow("result",display);
+            waitKey(0);
 
             //Compute criteria for each cluster
                 //Output: Vecotor of ClusterData, each element of which contains index, score, flag of checking.
@@ -394,7 +410,7 @@ public:
 
             //Pose refinement
             t=cv::getTickCount ();
-            icpPoseRefine(cluster_data,pc_ptr);
+            icpPoseRefine(cluster_data,pc_ptr,true);
             t=(cv::getTickCount ()-t)/cv::getTickFrequency ();
             cout<<"Time consumed by pose refinement: "<<t<<endl;
 
@@ -1183,89 +1199,121 @@ public:
              }
          }
 
-         void icpPoseRefine(vector<ClusterData>& cluster_data,PointCloudXYZ::Ptr pc)
+         void icpPoseRefine(vector<ClusterData>& cluster_data,PointCloudXYZ::Ptr pc, bool is_viz)
          {
              for(vector<ClusterData>::iterator it = cluster_data.begin();it!=cluster_data.end();++it)
              {
-                 //Get scene point cloud indices
-                  pcl::PointIndices::Ptr indices(new pcl::PointIndices);
-                  indices=getPointCloudIndices(it);
-                 //Extract scene pc according to indices
-                  PointCloudXYZ::Ptr scene_pc(new PointCloudXYZ);
-                  extractPointsByIndices(indices,pc,scene_pc,false,false);
+                //Get scene point cloud indices
+                 pcl::PointIndices::Ptr indices(new pcl::PointIndices);
+                 indices=getPointCloudIndices(it);
+                //Extract scene pc according to indices
+                 PointCloudXYZ::Ptr scene_pc(new PointCloudXYZ);
+                 extractPointsByIndices(indices,pc,scene_pc,false,false);
 
-                  //Viz for test
-                  pcl::visualization::PCLVisualizer v("view_test");
-                  v.addPointCloud(scene_pc,"scene");
+                 //Viz for test
+                 pcl::visualization::PCLVisualizer v("view_test");
                   pcl::visualization::PointCloudColorHandlerRandom<pcl::PointXYZ> color(it->model_pc);
-                  v.addPointCloud(it->model_pc,color,"model");
-                  v.spin();
+                 if(is_viz)
+                 {
+                     v.addPointCloud(scene_pc,"scene");
+                     v.addPointCloud(it->model_pc,color,"model");
+                     v.spin();
+                 }
 
-                  //Remove Nan points
-                  vector<int> index;
-                  it->model_pc->is_dense=false;
-                  pcl::removeNaNFromPointCloud(*(it->model_pc),*(it->model_pc),index);
-                  pcl::removeNaNFromPointCloud(*scene_pc,*scene_pc,index);
+                 //Remove Nan points
+                 vector<int> index;
+                 it->model_pc->is_dense=false;
+                 pcl::removeNaNFromPointCloud(*(it->model_pc),*(it->model_pc),index);
+                 pcl::removeNaNFromPointCloud(*scene_pc,*scene_pc,index);
 
-                  //Statistical outlier removal
-                  statisticalOutlierRemoval(scene_pc,50,1.0);
+                 //Statistical outlier removal
+                 statisticalOutlierRemoval(scene_pc,50,1.0);
 
-                  euclidianClustering(scene_pc,0.01);
+                 euclidianClustering(scene_pc,0.01);
 
- //                 float leaf_size=0.002;
- //                 voxelGridFilter(scene_pc,leaf_size);
- //                 voxelGridFilter(it->model_pc,leaf_size);
+//                 float leaf_size=0.002;
+//                 voxelGridFilter(scene_pc,leaf_size);
+//                 voxelGridFilter(it->model_pc,leaf_size);
 
-                  //Viz for test
-                  v.updatePointCloud(scene_pc,"scene");
-                  v.updatePointCloud(it->model_pc,color,"model");
-                  v.spin();
+                 //Coarse alignment
+                 icp.setRANSACOutlierRejectionThreshold(0.02);
+                 icp.setInputSource (it->model_pc);
+                 icp.setInputTarget (scene_pc);
+                 icp.align (*(it->model_pc));
+                 if(!icp.hasConverged())
+                 {
+                     cout<<"ICP cannot converge"<<endl;
+                 }
+                 else{
+                     cout<<"ICP fitness score of coarse alignment: "<<icp.getFitnessScore()<<endl;
+                 }
+                 //Update pose
+                 Eigen::Matrix4f tf_mat = icp.getFinalTransformation();
+                 Eigen::Matrix4d tf_mat_d=tf_mat.cast<double>();
+                 Eigen::Affine3d tf(tf_mat_d);
+                 it->pose=tf*it->pose;
 
-                  //Coarse alignment
-                  icp.setInputSource (it->model_pc);
-                  icp.setInputTarget (scene_pc);
-                  icp.align (*(it->model_pc));
-                  if(!icp.hasConverged())
-                      cout<<"ICP cannot converge"<<endl;
-                  //Update pose
-                  Eigen::Matrix4f tf_mat = icp.getFinalTransformation();
-                  Eigen::Matrix4d tf_mat_d=tf_mat.cast<double>();
-                  Eigen::Affine3d tf(tf_mat_d);
-                  it->pose=tf*it->pose;
+                 //Viz for test
+                 if(is_viz)
+                 {
+                     v.updatePointCloud(it->model_pc,color,"model");
+                     v.updatePointCloud(scene_pc,"scene");
+                     v.spin();
+                 }
 
-                  //Fine alignment 1
-                  icp.setMaximumIterations(20);
-                  icp.setMaxCorrespondenceDistance(0.02);
-                  icp.setInputSource (it->model_pc);
-                  icp.setInputTarget (scene_pc);
-                  icp.align (*(it->model_pc));
-                  if(!icp.hasConverged())
-                      cout<<"ICP cannot converge"<<endl;
-                  //Update pose
-                  tf_mat = icp.getFinalTransformation();
-                  tf_mat_d=tf_mat.cast<double>();
-                  tf.matrix()=tf_mat_d;
-                  it->pose=tf*it->pose;
+                 //Fine alignment 1
+                 icp.setEuclideanFitnessEpsilon(1e-4);
+                 icp.setRANSACOutlierRejectionThreshold(0.01);
+                 icp.setMaximumIterations(20);
+                 icp.setMaxCorrespondenceDistance(0.01);
+                 icp.setInputSource (it->model_pc);
+                 icp.setInputTarget (scene_pc);
+                 icp.align (*(it->model_pc));
+                 if(!icp.hasConverged())
+                 {
+                     cout<<"ICP cannot converge"<<endl;
+                 }
+                 else{
+                     cout<<"ICP fitness score of fine alignment 1: "<<icp.getFitnessScore()<<endl;
+                 }
+                 //Update pose
+                 tf_mat = icp.getFinalTransformation();
+                 tf_mat_d=tf_mat.cast<double>();
+                 tf.matrix()=tf_mat_d;
+                 it->pose=tf*it->pose;
 
-                  //Fine alignment 2
-                  icp.setMaximumIterations(10);
-                  icp.setMaxCorrespondenceDistance(0.005);
-                  icp.setInputSource (it->model_pc);
-                  icp.setInputTarget (scene_pc);
-                  icp.align (*(it->model_pc));
-                  if(!icp.hasConverged())
-                      cout<<"ICP cannot converge"<<endl;
-                  //Update pose
-                  tf_mat = icp.getFinalTransformation();
-                  tf_mat_d=tf_mat.cast<double>();
-                  tf.matrix()=tf_mat_d;
-                  it->pose=tf*it->pose;
+                 //Viz for test
+                 if(is_viz)
+                 {
+                     v.updatePointCloud(it->model_pc,color,"model");
+                     v.updatePointCloud(scene_pc,"scene");
+                     v.spin();
+                 }
 
-                  //Viz test
-                  v.updatePointCloud(it->model_pc,color,"model");
-                  v.spin();
+//                 //Fine alignment 2
+//                 icp.setRANSACOutlierRejectionThreshold(0.005);
+//                 icp.setMaximumIterations(10);
+//                 icp.setMaxCorrespondenceDistance(0.005);
+//                 icp.setInputSource (it->model_pc);
+//                 icp.setInputTarget (scene_pc);
+//                 icp.align (*(it->model_pc));
+//                 if(!icp.hasConverged())
+//                 {
+//                     cout<<"ICP cannot converge"<<endl;
+//                 }
+//                 else{
+//                     cout<<"ICP fitness score of fine alignment 2: "<<icp.getFitnessScore()<<endl;
+//                 }
+//                 //Update pose
+//                 tf_mat = icp.getFinalTransformation();
+//                 tf_mat_d=tf_mat.cast<double>();
+//                 tf.matrix()=tf_mat_d;
+//                 it->pose=tf*it->pose;
 
-                  int p=0;
+//                 //Viz test
+//                 v.updatePointCloud(it->model_pc,color,"model");
+//                 v.spin();
+
              }
          }
 
