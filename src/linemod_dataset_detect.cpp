@@ -48,6 +48,7 @@
 #include <pcl/filters/voxel_grid.h>
 #include <pcl/segmentation/extract_clusters.h>
 #include <pcl/filters/statistical_outlier_removal.h>
+#include <pcl/octree/octree.h>
 
 //ensenso
 #include <ensenso/RegistImage.h>
@@ -116,6 +117,7 @@ struct ClusterData{
     cv::Mat K_matrix;
     double dist;
     PointCloudXYZ::Ptr model_pc;
+    PointCloudXYZ::Ptr scene_pc;
     Eigen::Affine3d pose;
 
 };
@@ -399,18 +401,16 @@ public:
             cluster_filter(map_match,thresh);
 
             //Display
-            std::map<std::vector<int>, std::vector<linemod::Match> >::iterator it_map=map_match.begin();
-            for(;it_map!=map_match.end();++it_map)
-            {
-                for(std::vector<linemod::Match>::iterator it_vec= it_map->second.begin();it_vec != it_map->second.end();it_vec++){
-                    std::vector<cv::linemod::Template> templates=detector->getTemplates(it_vec->class_id, it_vec->template_id);
-                    drawResponse(templates, 1, mat_rgb,cv::Point(it_vec->x,it_vec->y), 2);
-                }
-
-            }
-
-            imshow("result",mat_rgb);
-            waitKey(0);
+//            std::map<std::vector<int>, std::vector<linemod::Match> >::iterator it_map=map_match.begin();
+//            for(;it_map!=map_match.end();++it_map)
+//            {
+//                for(std::vector<linemod::Match>::iterator it_vec= it_map->second.begin();it_vec != it_map->second.end();it_vec++){
+//                    std::vector<cv::linemod::Template> templates=detector->getTemplates(it_vec->class_id, it_vec->template_id);
+//                    drawResponse(templates, 1, mat_rgb,cv::Point(it_vec->x,it_vec->y), 2);
+//                }
+//            }
+//            imshow("result",mat_rgb);
+//            waitKey(0);
 
             //Compute criteria for each cluster
                 //Output: Vecotor of ClusterData, each element of which contains index, score, flag of checking.
@@ -423,6 +423,18 @@ public:
 
             //Non-maxima suppression
             nonMaximaSuppression(cluster_data,5,map_match);
+
+            //Display
+            for(vector<ClusterData>::iterator iter=cluster_data.begin();iter!=cluster_data.end();++iter)
+            {
+                for(std::vector<linemod::Match>::iterator it= iter->matches.begin();it != iter->matches.end();it++)
+                {
+                    std::vector<cv::linemod::Template> templates=detector->getTemplates(it->class_id, it->template_id);
+                    drawResponse(templates, 1, mat_rgb,cv::Point(it->x,it->y), 2);
+                }
+            }
+            imshow("Non-maxima suppression",mat_rgb);
+            waitKey(0);
 
             //Pose average
             t=cv::getTickCount ();
@@ -437,6 +449,9 @@ public:
             icpPoseRefine(cluster_data,pc_ptr,true);
             t=(cv::getTickCount ()-t)/cv::getTickFrequency ();
             cout<<"Time consumed by pose refinement: "<<t<<endl;
+
+            //Hypothesis verification
+            hypothesisVerification(cluster_data,0.002);
 
             //Display all the bounding box
             for(int ii=0;ii<cluster_data.size();++ii)
@@ -1243,6 +1258,11 @@ public:
 
          void icpPoseRefine(vector<ClusterData>& cluster_data,PointCloudXYZ::Ptr pc, bool is_viz)
          {
+             pcl::visualization::PCLVisualizer::Ptr v;
+             if(is_viz)
+             {
+                 v=boost::make_shared<pcl::visualization::PCLVisualizer>("view");
+             }
              for(vector<ClusterData>::iterator it = cluster_data.begin();it!=cluster_data.end();++it)
              {
                 //Get scene point cloud indices
@@ -1252,14 +1272,13 @@ public:
                  PointCloudXYZ::Ptr scene_pc(new PointCloudXYZ);
                  extractPointsByIndices(indices,pc,scene_pc,false,false);
 
-                 //Viz for test
-                 pcl::visualization::PCLVisualizer v("view_test");
-                 pcl::visualization::PointCloudColorHandlerRandom<pcl::PointXYZ> color(it->model_pc);
+                 //Viz for test                 
                  if(is_viz)
                  {
-                     v.addPointCloud(scene_pc,"scene");
-                     v.addPointCloud(it->model_pc,color,"model");
-                     v.spin();
+                     pcl::visualization::PointCloudColorHandlerRandom<pcl::PointXYZ> color(it->model_pc);
+                     v->addPointCloud(scene_pc,"scene");
+                     v->addPointCloud(it->model_pc,color,"model");
+                     v->spin();
                  }
 
                  //Remove Nan points
@@ -1276,6 +1295,9 @@ public:
 //                 float leaf_size=0.002;
 //                 voxelGridFilter(scene_pc,leaf_size);
 //                 voxelGridFilter(it->model_pc,leaf_size);
+
+                 //Save scene point cloud for later HV
+                 it->scene_pc=scene_pc;
 
                  //Coarse alignment
                  icp.setRANSACOutlierRejectionThreshold(0.02);
@@ -1298,9 +1320,10 @@ public:
                  //Viz for test
                  if(is_viz)
                  {
-                     v.updatePointCloud(it->model_pc,color,"model");
-                     v.updatePointCloud(scene_pc,"scene");
-                     v.spin();
+                     pcl::visualization::PointCloudColorHandlerRandom<pcl::PointXYZ> color(it->model_pc);
+                     v->updatePointCloud(it->model_pc,color,"model");
+                     v->updatePointCloud(scene_pc,"scene");
+                     v->spin();
                  }
 
                  //Fine alignment 1
@@ -1327,9 +1350,10 @@ public:
                  //Viz for test
                  if(is_viz)
                  {
-                     v.updatePointCloud(it->model_pc,color,"model");
-                     v.updatePointCloud(scene_pc,"scene");
-                     v.spin();
+                     pcl::visualization::PointCloudColorHandlerRandom<pcl::PointXYZ> color(it->model_pc);
+                     v->updatePointCloud(it->model_pc,color,"model");
+                     v->updatePointCloud(scene_pc,"scene");
+                     v->spin();
                  }
 
 //                 //Fine alignment 2
@@ -1647,6 +1671,38 @@ public:
             {
                 cout<<it->pose.matrix()<<endl;
             }
+        }
+
+        void hypothesisVerification(vector<ClusterData>& cluster_data,float octree_res)
+        {
+            vector<ClusterData>::iterator it =cluster_data.begin();
+            for(;it!=cluster_data.end();++it)
+            {
+                pcl::octree::OctreePointCloud<pcl::PointXYZ> octree(octree_res);
+                octree.setInputCloud(it->scene_pc);
+                octree.addPointsFromInputCloud();
+
+                int count=0;
+
+                std::vector<pcl::PointXYZ, Eigen::aligned_allocator<pcl::PointXYZ> >::iterator iter_pc=it->model_pc->points.begin();
+                for(;iter_pc!=it->model_pc->points.end();++iter_pc)
+                {
+                    if(octree.isVoxelOccupiedAtPoint(*iter_pc))
+                        count++;
+                }
+                int model_pts=it->model_pc->points.size();
+
+                pcl::visualization::PCLVisualizer v("check");
+                pcl::visualization::PointCloudColorHandlerRandom<pcl::PointXYZ> color(it->model_pc);
+                v.addPointCloud(it->scene_pc,"scene");
+                v.addPointCloud(it->model_pc,color,"model");
+                v.spin();
+
+                double collision_rate = (double)count/(double)model_pts;
+                int p=0;
+
+            }
+
         }
 
 };
