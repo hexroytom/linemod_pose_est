@@ -233,10 +233,14 @@ public:
     ros::ServiceClient ensenso_registImg_client;
     ros::ServiceClient ensenso_singlePc_client;
 
+    //File path for ground truth
+    std::string gr_prefix;
+
 
 public:
         linemod_detect(std::string template_file_name,std::string renderer_params_name,std::string mesh_path,float detect_score_threshold,int icp_max_iter,float icp_tr_epsilon,float icp_fitness_threshold, float icp_maxCorresDist, uchar clustering_step,float orientation_clustering_th):
             it(nh),
+            gr_prefix("/home/yake/catkin_ws/src/linemod_pose_est/dataset/Annotation/"),
             sub_color(nh,"/camera/rgb/image_rect_color",5),
             sub_depth(nh,"/camera/depth_registered/image_raw",5),
             sub_pc(nh,"/camera/depth_registered/points",5),

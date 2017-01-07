@@ -59,6 +59,7 @@
 
 //std
 #include <math.h>
+#include <fstream>
 
 //time synchronize
 #define APPROXIMATE
@@ -82,6 +83,9 @@ typedef pcl::PointCloud<pcl::PointXYZ> PointCloudXYZ;
 //namespace
 using namespace cv;
 using namespace std;
+
+//Global vairable
+string gr_file_serial;
 
 //Score based on evaluation for 1 cluster
 struct ClusterData{
@@ -171,6 +175,26 @@ bool sortXyCluster(const vector<pair<int,int> >& cluster1,const vector<pair<int,
     return(cluster1.size()>cluster2.size());
 }
 
+string getGRfileSerial(string img_path)
+{
+    //Ref: home/yake/catkin_ws/src/linemod_pose_est/dataset/RGB/img_330.png
+    string::iterator it_str=img_path.end();
+    it_str-=5;
+    string::iterator last_number=it_str;
+    while(*it_str != '_')
+    {
+        it_str--;
+    }
+    string::iterator first_num=it_str+1;
+    string num_str(first_num,last_number+1);
+    if(num_str[0] == '0')
+    {
+        num_str.erase(num_str.begin());
+    }
+
+    return num_str;
+}
+
 class linemod_detect
 {
     ros::NodeHandle nh;
@@ -242,10 +266,14 @@ public:
     //Offset for compensating cropped image
     int bias_x;
 
+    //File path for ground truth
+    std::string gr_prefix;
+
 
 public:
         linemod_detect(std::string template_file_name,std::string renderer_params_name,std::string mesh_path,float detect_score_threshold,int icp_max_iter,float icp_tr_epsilon,float icp_fitness_threshold, float icp_maxCorresDist, uchar clustering_step,float orientation_clustering_th):
             it(nh),
+            gr_prefix("/home/yake/catkin_ws/src/linemod_pose_est/dataset/Annotation/"),
             sub_color(nh,"/camera/rgb/image_rect_color",1),
             sub_depth(nh,"/camera/depth_registered/image_raw",1),
             depth_frame_id_("camera_link"),
@@ -446,7 +474,7 @@ public:
 
             //Pose refinement
             t=cv::getTickCount ();
-            icpPoseRefine(cluster_data,pc_ptr,true);
+            icpPoseRefine(cluster_data,pc_ptr,false);
             t=(cv::getTickCount ()-t)/cv::getTickFrequency ();
             cout<<"Time consumed by pose refinement: "<<t<<endl;
 
@@ -454,16 +482,16 @@ public:
             hypothesisVerification(cluster_data,0.002);
 
             //Display all the bounding box
-            for(int ii=0;ii<cluster_data.size();++ii)
-            {
-                rectangle(display,cluster_data[ii].rect,Scalar(0,0,255),2);
-            }
+//            for(int ii=0;ii<cluster_data.size();++ii)
+//            {
+//                rectangle(display,cluster_data[ii].rect,Scalar(0,0,255),2);
+//            }
 
             imshow("display",display);
             cv::waitKey (0);
 
             //Viz in point cloud
-            vizResultPclViewer(cluster_data,pc_ptr);
+//            vizResultPclViewer(cluster_data,pc_ptr);
 
             //Result analysis
             poseComparision(cluster_data);
@@ -1667,6 +1695,11 @@ public:
 
         void poseComparision(const vector<ClusterData>& cluster_data)
         {
+            //Open ground truth file
+            string gr_file_path=gr_prefix + "poses" + gr_file_serial + ".txt";
+            PointCloudXYZ groundTruth_position;
+            openGroundTruthFile(gr_file_path,groundTruth_position);
+
             for(vector<ClusterData>::const_iterator it = cluster_data.begin();it!=cluster_data.end();++it)
             {
                 cout<<it->pose.matrix()<<endl;
@@ -1703,6 +1736,60 @@ public:
 
             }
 
+        }
+
+        bool openGroundTruthFile(string gr_file_path, PointCloudXYZ& position)
+        {
+            //Initiate position of ground truth
+            position.clear();
+
+            ifstream file;
+            file.open(gr_file_path.data());
+            if(!file.is_open())
+                return false;
+
+            string str;
+            int num_line=0;
+            while(getline(file,str))
+            {
+                num_line++;
+                if(num_line == 2 || num_line == 6 || num_line == 10)
+                {
+                    string::iterator it=str.end();
+                    while(*it != ' ')
+                        it--;
+                    string x_str(it+1,str.end());
+
+                    //Read y
+                    getline(file,str);
+                    num_line++;
+                    it=str.end();
+                    while(*it != ' ')
+                        it--;
+                    string y_str(it+1,str.end());
+
+                    //Read z
+                    getline(file,str);
+                    num_line++;
+                    it=str.end();
+                    while(*it != ' ')
+                        it--;
+                    string z_str(it+1,str.end());
+
+                    double x=0.0; double y=0.0; double z=0.0;
+                    x=atof(x_str.data());
+                    y=atof(y_str.data());
+                    z=atof(z_str.data());
+
+                    position.push_back(pcl::PointXYZ(x,y,z));
+
+
+                }
+
+
+            }
+
+            return true;
         }
 
 };
@@ -1742,6 +1829,9 @@ int main(int argc,char** argv)
     //Read rgb and depth image
     string img_path=argv[11];
     string depth_path=argv[12];
+
+    //Extract file number for later use
+    gr_file_serial=getGRfileSerial(img_path);
 
     Mat rgb_img=imread(img_path,IMREAD_COLOR);
     Mat depth_img=imread(depth_path,IMREAD_UNCHANGED);
