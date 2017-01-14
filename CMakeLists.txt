@@ -137,9 +137,9 @@ include_directories(
 )
 
 ## Declare a C++ library
-# add_library(linemod_pose_estimation
-#   src/${PROJECT_NAME}/linemod_pose_estimation.cpp
-# )
+ add_library(rgbdDetector
+   src/rgbdDetector.cpp
+ )
 
 ## Add cmake target dependencies of the library
 ## as an example, code may need to be generated before libraries
@@ -205,6 +205,13 @@ target_link_libraries(linemod_carmine_detect_node
 )
 
 target_link_libraries(linemod_dataset_detect_node
+  ${catkin_LIBRARIES}
+  ${OpenCV_LIBRARIES}
+  ${PCL_LIBRARIES}
+  rgbdDetector
+)
+
+target_link_libraries(rgbdDetector
   ${catkin_LIBRARIES}
   ${OpenCV_LIBRARIES}
   ${PCL_LIBRARIES}
