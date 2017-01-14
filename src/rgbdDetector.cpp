@@ -23,11 +23,8 @@ rgbdDetector::rgbdDetector()
 
 //Perform the LINEMOD detection
 void rgbdDetector::linemod_detection(Ptr<linemod::Detector> linemod_detector,const vector<Mat>& sources,const float& threshold,std::vector<linemod::Match>& matches)
-{    
-    double t=cv::getTickCount ();
+{
     linemod_detector->match (sources,threshold,matches,std::vector<String>(),noArray());
-    t=(cv::getTickCount ()-t)/cv::getTickFrequency ();
-    cout<<"Time consumed by template matching: "<<t<<" s. "<<"Candidates matches: "<<matches.size()<<endl;
 }
 
 void rgbdDetector::rcd_voting(vector<double>& Obj_origin_dists,const double& renderer_radius_min,const int& vote_row_col_step,const double& renderer_radius_step_,const vector<linemod::Match>& matches,std::map<std::vector<int>, std::vector<linemod::Match> >& map_match)
@@ -790,6 +787,100 @@ void rgbdDetector::hypothesisVerification(vector<ClusterData>& cluster_data, flo
 
 }
 
+void rgbdDetector::icpNonLinearPoseRefine(vector<ClusterData>& cluster_data,PointCloudXYZ::Ptr pc,int bias_x)
+{
+    for(vector<ClusterData>::iterator it = cluster_data.begin();it!=cluster_data.end();++it)
+    {
+       //Get scene point cloud indices
+        pcl::PointIndices::Ptr indices(new pcl::PointIndices);
+        indices=getPointCloudIndices(it,bias_x);
+       //Extract scene pc according to indices
+        PointCloudXYZ::Ptr scene_pc(new PointCloudXYZ);
+        extractPointsByIndices(indices,pc,scene_pc,false,false);
+
+        //Viz for test
+        pcl::visualization::PCLVisualizer v("view_test");
+        v.addPointCloud(scene_pc,"scene");
+        pcl::visualization::PointCloudColorHandlerRandom<pcl::PointXYZ> color(it->model_pc);
+        v.addPointCloud(it->model_pc,color,"model");
+        v.spin();
+
+        //Remove Nan points
+        vector<int> index;
+        it->model_pc->is_dense=false;
+        pcl::removeNaNFromPointCloud(*(it->model_pc),*(it->model_pc),index);
+        pcl::removeNaNFromPointCloud(*scene_pc,*scene_pc,index);
+
+        //Statistical outlier removal
+        statisticalOutlierRemoval(scene_pc,50,1.0);
+
+        //euclidianClustering(scene_pc,0.01);
+
+//                 float leaf_size=0.002;
+//                 voxelGridFilter(scene_pc,leaf_size);
+//                 voxelGridFilter(it->model_pc,leaf_size);
+
+        //Viz for test
+        v.updatePointCloud(scene_pc,"scene");
+        v.updatePointCloud(it->model_pc,color,"model");
+        v.spin();
+
+        //Instantiate a non-linear ICP object
+        pcl::IterativeClosestPointNonLinear<pcl::PointXYZ,pcl::PointXYZ> icp_;
+        icp_.setMaxCorrespondenceDistance(0.05);
+        icp_.setMaximumIterations(50);
+        icp_.setRANSACOutlierRejectionThreshold(0.02);
+        icp_.setTransformationEpsilon (1e-8);
+        icp_.setEuclideanFitnessEpsilon (0.002);
+
+        //Coarse alignment
+        icp_.setInputSource (it->model_pc);
+        icp_.setInputTarget (scene_pc);
+        icp_.align (*(it->model_pc));
+        if(!icp_.hasConverged())
+            cout<<"ICP cannot converge"<<endl;
+        //Update pose
+        Eigen::Matrix4f tf_mat = icp_.getFinalTransformation();
+        Eigen::Matrix4d tf_mat_d=tf_mat.cast<double>();
+        Eigen::Affine3d tf(tf_mat_d);
+        it->pose=tf*it->pose;
+
+        //Fine alignment 1
+        icp_.setRANSACOutlierRejectionThreshold(0.01);
+        icp_.setMaximumIterations(20);
+        icp_.setMaxCorrespondenceDistance(0.02);
+        icp_.setInputSource (it->model_pc);
+        icp_.setInputTarget (scene_pc);
+        icp_.align (*(it->model_pc));
+        if(!icp_.hasConverged())
+            cout<<"ICP cannot converge"<<endl;
+        //Update pose
+        tf_mat = icp_.getFinalTransformation();
+        tf_mat_d=tf_mat.cast<double>();
+        tf.matrix()=tf_mat_d;
+        it->pose=tf*it->pose;
+
+        //Fine alignment 2
+        icp_.setMaximumIterations(10);
+        icp_.setMaxCorrespondenceDistance(0.005);
+        icp_.setInputSource (it->model_pc);
+        icp_.setInputTarget (scene_pc);
+        icp_.align (*(it->model_pc));
+        if(!icp_.hasConverged())
+            cout<<"ICP cannot converge"<<endl;
+        //Update pose
+        tf_mat = icp_.getFinalTransformation();
+        tf_mat_d=tf_mat.cast<double>();
+        tf.matrix()=tf_mat_d;
+        it->pose=tf*it->pose;
+
+        //Viz test
+        v.updatePointCloud(it->model_pc,color,"model");
+        v.spin();
+
+    }
+}
+
 //Utility
 pcl::PointIndices::Ptr rgbdDetector::getPointCloudIndices(vector<ClusterData>::iterator& it, int bias_x)
 {
@@ -810,6 +901,30 @@ pcl::PointIndices::Ptr rgbdDetector::getPointCloudIndices(vector<ClusterData>::i
                 int index=y_cropped*640+x_cropped+bias_x;
                 indices->indices.push_back(index);
             }
+        }
+    }
+    return indices;
+
+}
+
+pcl::PointIndices::Ptr rgbdDetector::getPointCloudIndices(const cv::Rect& rect, int bias_x)
+{
+    int row_offset=rect.y;
+    int col_offset=rect.x;
+    pcl::PointIndices::Ptr indices(new pcl::PointIndices);
+    for(int i=0;i<rect.height;++i)
+    {
+        for(int j=0;j<rect.width;++j)
+        {
+            //Notice: the coordinate of input params "rect" is w.r.t cropped image, so the offset is needed to transform coordinate
+            int x_cropped=j+col_offset;
+            int y_cropped=i+row_offset;
+            int x_uncropped=x_cropped+bias_x;
+            int y_uncropped=y_cropped;
+            //Attention: image width of ensenso: 752, image height of ensenso: 480
+            int index=y_uncropped*640+x_uncropped;
+            indices->indices.push_back(index);
+
         }
     }
     return indices;

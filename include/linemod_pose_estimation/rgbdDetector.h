@@ -165,9 +165,13 @@ public:
 
     pcl::PointIndices::Ptr getPointCloudIndices(vector<ClusterData>::iterator& it, int bias_x);
 
+    pcl::PointIndices::Ptr getPointCloudIndices(const cv::Rect& rect, int bias_x);
+
     void extractPointsByIndices(pcl::PointIndices::Ptr indices, const PointCloudXYZ::Ptr ref_pts, PointCloudXYZ::Ptr extracted_pts, bool is_negative,bool is_organised);
 
     void icpPoseRefine(vector<ClusterData>& cluster_data, pcl::IterativeClosestPoint<pcl::PointXYZ, pcl::PointXYZ> &icp, PointCloudXYZ::Ptr pc, int bias_x, bool is_viz);
+
+    void icpNonLinearPoseRefine(vector<ClusterData>& cluster_data, PointCloudXYZ::Ptr pc, int bias_x);
 
     void euclidianClustering(PointCloudXYZ::Ptr pts,float dist);
 
