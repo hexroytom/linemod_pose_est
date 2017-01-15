@@ -196,12 +196,14 @@ target_link_libraries(linemod_ensenso_detect_node
   ${catkin_LIBRARIES}
   ${OpenCV_LIBRARIES}
   ${PCL_LIBRARIES}
+  rgbdDetector
 )
 
 target_link_libraries(linemod_carmine_detect_node
   ${catkin_LIBRARIES}
   ${OpenCV_LIBRARIES}
   ${PCL_LIBRARIES}
+  rgbdDetector
 )
 
 target_link_libraries(linemod_dataset_detect_node

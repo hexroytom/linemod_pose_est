@@ -1,3 +1,5 @@
+#include <linemod_pose_estimation/rgbdDetector.h>
+
 //ros
 #include <ros/ros.h>
 #include <sensor_msgs/Image.h>
@@ -81,44 +83,6 @@ typedef pcl::PointCloud<pcl::PointXYZ> PointCloudXYZ;
 using namespace cv;
 using namespace std;
 
-//Score based on evaluation for 1 cluster
-struct ClusterData{
-
-    ClusterData():
-        model_pc(new PointCloudXYZ)
-    {
-        index.resize(3);
-        is_checked=false;
-        dist=0.0;
-
-    }
-
-    ClusterData(const vector<int> index_,double score_):
-        index(index_),
-        score(score_),
-        is_checked(false),
-        dist(0.0),
-        model_pc(new PointCloudXYZ)
-    {
-
-    }
-
-    vector<linemod::Match> matches;
-    vector<int> index;
-    double score;
-    bool is_checked;
-    Rect rect;
-    cv::Matx33d orientation;
-    cv::Vec3d position;
-    cv::Vec3d T_match;
-    cv::Mat mask;
-    cv::Mat K_matrix;
-    double dist;
-    PointCloudXYZ::Ptr model_pc;
-    Eigen::Affine3d pose;
-
-};
-
 struct LinemodData{
   LinemodData(
           std::vector<cv::Vec3f> _pts_ref,
@@ -153,15 +117,6 @@ struct LinemodData{
   bool check_done;
 };
 
-bool sortOrienCluster(const vector<Eigen::Matrix3d>& cluster1,const vector<Eigen::Matrix3d>& cluster2)
-{
-    return(cluster1.size()>cluster2.size());
-}
-
-bool sortIdCluster(const vector<int>& cluster1,const vector<int>& cluster2)
-{
-    return(cluster1.size()>cluster2.size());
-}
 
 class linemod_detect
 {

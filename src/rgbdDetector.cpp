@@ -305,7 +305,7 @@ double rgbdDetector::getClusterScore(const double& depth_diff_score,const double
 
 }
 
-void rgbdDetector::getRoughPoseByClustering(vector<ClusterData>& cluster_data,PointCloudXYZ::Ptr pc,vector<Mat>& Rs_,vector<Mat>& Ts_, vector<double>& Distances_,vector<double>& Obj_origin_dists,float orientation_clustering_th_,RendererIterator *renderer_iterator_,double& renderer_focal_length_x,double& renderer_focal_length_y,int& bias_x)
+void rgbdDetector::getRoughPoseByClustering(vector<ClusterData>& cluster_data,PointCloudXYZ::Ptr pc,vector<Mat>& Rs_,vector<Mat>& Ts_, vector<double>& Distances_,vector<double>& Obj_origin_dists,float orientation_clustering_th_,RendererIterator *renderer_iterator_,double& renderer_focal_length_x,double& renderer_focal_length_y,IMAGE_WIDTH& image_width,int& bias_x)
 {
     //For each cluster
     for(vector<ClusterData>::iterator it = cluster_data.begin();it!=cluster_data.end();++it)
@@ -468,7 +468,7 @@ void rgbdDetector::getRoughPoseByClustering(vector<ClusterData>& cluster_data,Po
             pcl::PointIndices::Ptr indices_tmp(new pcl::PointIndices());
             vector<int> index_tmp;
 
-            indices_tmp=getPointCloudIndices(it,bias_x);
+            indices_tmp=getPointCloudIndices(it,image_width,bias_x);
             extractPointsByIndices(indices_tmp,pc,pts_tmp,false,false);
             pcl::removeNaNFromPointCloud(*pts_tmp,*pts_tmp,index_tmp);
 
@@ -557,7 +557,7 @@ bool rgbdDetector::orientationCompare(Eigen::Matrix3d& orien1,Eigen::Matrix3d& o
 
 }
 
-void rgbdDetector::icpPoseRefine(vector<ClusterData>& cluster_data,pcl::IterativeClosestPoint<pcl::PointXYZ, pcl::PointXYZ>& icp,PointCloudXYZ::Ptr pc, int bias_x,bool is_viz)
+void rgbdDetector::icpPoseRefine(vector<ClusterData>& cluster_data,pcl::IterativeClosestPoint<pcl::PointXYZ, pcl::PointXYZ>& icp,PointCloudXYZ::Ptr pc, IMAGE_WIDTH image_width,int bias_x,bool is_viz)
 {
     pcl::visualization::PCLVisualizer::Ptr v;
     if(is_viz)
@@ -569,7 +569,7 @@ void rgbdDetector::icpPoseRefine(vector<ClusterData>& cluster_data,pcl::Iterativ
     {
        //Get scene point cloud indices
         pcl::PointIndices::Ptr indices(new pcl::PointIndices);
-        indices=getPointCloudIndices(it,bias_x);
+        indices=getPointCloudIndices(it,image_width,bias_x);
        //Extract scene pc according to indices
         PointCloudXYZ::Ptr scene_pc(new PointCloudXYZ);
         extractPointsByIndices(indices,pc,scene_pc,false,false);
@@ -767,11 +767,11 @@ void rgbdDetector::hypothesisVerification(vector<ClusterData>& cluster_data, flo
         }
         int model_pts=it->model_pc->points.size();
 
-        //                pcl::visualization::PCLVisualizer v("check");
-        //                pcl::visualization::PointCloudColorHandlerRandom<pcl::PointXYZ> color(it->model_pc);
-        //                v.addPointCloud(it->scene_pc,"scene");
-        //                v.addPointCloud(it->model_pc,color,"model");
-        //                v.spin();
+        pcl::visualization::PCLVisualizer v("check");
+        pcl::visualization::PointCloudColorHandlerRandom<pcl::PointXYZ> color(it->model_pc);
+        v.addPointCloud(it->scene_pc,"scene");
+        v.addPointCloud(it->model_pc,color,"model");
+        v.spin();
 
         double collision_rate = (double)count/(double)model_pts;
         if(collision_rate<thresh)
@@ -787,13 +787,13 @@ void rgbdDetector::hypothesisVerification(vector<ClusterData>& cluster_data, flo
 
 }
 
-void rgbdDetector::icpNonLinearPoseRefine(vector<ClusterData>& cluster_data,PointCloudXYZ::Ptr pc,int bias_x)
+void rgbdDetector::icpNonLinearPoseRefine(vector<ClusterData>& cluster_data,PointCloudXYZ::Ptr pc,IMAGE_WIDTH image_width,int bias_x)
 {
     for(vector<ClusterData>::iterator it = cluster_data.begin();it!=cluster_data.end();++it)
     {
        //Get scene point cloud indices
         pcl::PointIndices::Ptr indices(new pcl::PointIndices);
-        indices=getPointCloudIndices(it,bias_x);
+        indices=getPointCloudIndices(it,image_width,bias_x);
        //Extract scene pc according to indices
         PointCloudXYZ::Ptr scene_pc(new PointCloudXYZ);
         extractPointsByIndices(indices,pc,scene_pc,false,false);
@@ -882,7 +882,7 @@ void rgbdDetector::icpNonLinearPoseRefine(vector<ClusterData>& cluster_data,Poin
 }
 
 //Utility
-pcl::PointIndices::Ptr rgbdDetector::getPointCloudIndices(vector<ClusterData>::iterator& it, int bias_x)
+pcl::PointIndices::Ptr rgbdDetector::getPointCloudIndices(vector<ClusterData>::iterator& it, IMAGE_WIDTH image_width,int bias_x)
 {
     int x_cropped=0;
     int y_cropped=0;
@@ -898,7 +898,7 @@ pcl::PointIndices::Ptr rgbdDetector::getPointCloudIndices(vector<ClusterData>::i
                 x_cropped=j+it->rect.x;
                 y_cropped=i+it->rect.y;
                 //Attention: image width of ensenso: 752, image height of ensenso: 480
-                int index=y_cropped*640+x_cropped+bias_x;
+                int index=y_cropped*image_width+x_cropped+bias_x;
                 indices->indices.push_back(index);
             }
         }
@@ -907,7 +907,7 @@ pcl::PointIndices::Ptr rgbdDetector::getPointCloudIndices(vector<ClusterData>::i
 
 }
 
-pcl::PointIndices::Ptr rgbdDetector::getPointCloudIndices(const cv::Rect& rect, int bias_x)
+pcl::PointIndices::Ptr rgbdDetector::getPointCloudIndices(const cv::Rect& rect, IMAGE_WIDTH image_width,int bias_x)
 {
     int row_offset=rect.y;
     int col_offset=rect.x;
@@ -922,7 +922,7 @@ pcl::PointIndices::Ptr rgbdDetector::getPointCloudIndices(const cv::Rect& rect, 
             int x_uncropped=x_cropped+bias_x;
             int y_uncropped=y_cropped;
             //Attention: image width of ensenso: 752, image height of ensenso: 480
-            int index=y_uncropped*640+x_uncropped;
+            int index=y_uncropped*image_width+x_uncropped;
             indices->indices.push_back(index);
 
         }

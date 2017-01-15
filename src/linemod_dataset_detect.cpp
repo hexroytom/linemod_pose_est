@@ -215,6 +215,8 @@ public:
 
     //Offset for compensating cropped image
     int bias_x;
+    rgbdDetector::IMAGE_WIDTH image_width;
+
 
     //File path for ground truth
     std::string gr_prefix;
@@ -234,7 +236,8 @@ public:
             px_match_min_(0.25f),
             icp_dist_min_(0.06f),
             clustering_step_(clustering_step),
-            bias_x(0)
+            bias_x(0),
+            image_width(rgbdDetector::CARMINE)
         {
             //Publisher
             //pub_color_=it.advertise ("/sync_rgb",2);
@@ -427,7 +430,7 @@ public:
             //Pose average
             t=cv::getTickCount ();
             //getRoughPoseByClustering(cluster_data,pc_ptr);
-            rgbd_detector.getRoughPoseByClustering(cluster_data,pc_ptr,Rs_,Ts_,Distances_,Obj_origin_dists,orientation_clustering_th_,renderer_iterator_,renderer_focal_length_x,renderer_focal_length_y,bias_x);
+            rgbd_detector.getRoughPoseByClustering(cluster_data,pc_ptr,Rs_,Ts_,Distances_,Obj_origin_dists,orientation_clustering_th_,renderer_iterator_,renderer_focal_length_x,renderer_focal_length_y,image_width,bias_x);
             t=(cv::getTickCount ()-t)/cv::getTickFrequency ();
             cout<<"Time consumed by rough pose estimation : "<<t<<endl;
 
@@ -436,14 +439,14 @@ public:
             //Pose refinement
             t=cv::getTickCount ();
             //icpPoseRefine(cluster_data,pc_ptr,false);
-            rgbd_detector.icpPoseRefine(cluster_data,icp,pc_ptr,bias_x,false);
+            rgbd_detector.icpPoseRefine(cluster_data,icp,pc_ptr,image_width,bias_x,false);
             t=(cv::getTickCount ()-t)/cv::getTickFrequency ();
             cout<<"Time consumed by pose refinement: "<<t<<endl;
 
             //Hypothesis verification
             t=cv::getTickCount ();
             //hypothesisVerification(cluster_data,0.002,0.15);
-            rgbd_detector.hypothesisVerification(cluster_data,0.002,0.15);
+            rgbd_detector.hypothesisVerification(cluster_data,0.002,0.17);
             t=(cv::getTickCount ()-t)/cv::getTickFrequency ();
             cout<<"Time consumed by hypothesis verification: "<<t<<endl;
 

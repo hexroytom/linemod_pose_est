@@ -96,45 +96,11 @@ class rgbdDetector
 {
 
 public:
-//    //Params for templates pose
-//    vector<Mat> Rs_,Ts_;
-//    vector<double> Distances_;
-//    vector<double> Obj_origin_dists;
-//    vector<Mat> Ks_;
-//    vector<Rect> Rects_;
+    enum IMAGE_WIDTH{
+        ENSENSO = 752,
+        CARMINE = 640
+    };
 
-//    //Params for rendering
-//    int renderer_n_points;
-//    int renderer_angle_step;
-//    double renderer_radius_min;
-//    double renderer_radius_max;
-//    double renderer_radius_step;
-//    int renderer_width;
-//    int renderer_height;
-//    double renderer_focal_length_x;
-//    double renderer_focal_length_y;
-//    double renderer_near;
-//    double renderer_far;
-//    Renderer3d *renderer_;
-//    RendererIterator *renderer_iterator_;
-
-//    //Intrinsic matrix of RGB camera. it may be used for normal estimation.
-//    Matx33d K_rgb;
-
-//    //Param for orientation-based clustering
-//    float orientation_clustering_th_;
-
-//    //Linemod detector object
-//    //Ptr<linemod::Detector> linemod_detector;
-
-//    //Linemod threshold
-//    float linemod_thresh;
-
-//    //Offset for compensating cropped image
-//    int bias_x;
-
-//    //Iterative Closest Point
-//    pcl::IterativeClosestPoint<pcl::PointXYZ, pcl::PointXYZ> icp;
 
 public:
     rgbdDetector();
@@ -159,19 +125,19 @@ public:
 
     void nonMaximaSuppression(vector<ClusterData>& cluster_data,const double& neighborSize, vector<Rect>& Rects_,std::map<std::vector<int>, std::vector<linemod::Match> >& map_match);
 
-    void getRoughPoseByClustering(vector<ClusterData>& cluster_data, PointCloudXYZ::Ptr pc, vector<Mat> &Rs_, vector<Mat> &Ts_, vector<double> &Distances_, vector<double> &Obj_origin_dists, float orientation_clustering_th_, RendererIterator *renderer_iterator_, double &renderer_focal_length_x, double& renderer_focal_length_y, int& bias_x);
+    void getRoughPoseByClustering(vector<ClusterData>& cluster_data, PointCloudXYZ::Ptr pc, vector<Mat> &Rs_, vector<Mat> &Ts_, vector<double> &Distances_, vector<double> &Obj_origin_dists, float orientation_clustering_th_, RendererIterator *renderer_iterator_, double &renderer_focal_length_x, double& renderer_focal_length_y, IMAGE_WIDTH &image_width, int& bias_x);
 
     bool orientationCompare(Eigen::Matrix3d& orien1,Eigen::Matrix3d& orien2,double thresh);
 
-    pcl::PointIndices::Ptr getPointCloudIndices(vector<ClusterData>::iterator& it, int bias_x);
+    pcl::PointIndices::Ptr getPointCloudIndices(vector<ClusterData>::iterator& it, IMAGE_WIDTH image_width, int bias_x);
 
-    pcl::PointIndices::Ptr getPointCloudIndices(const cv::Rect& rect, int bias_x);
+    pcl::PointIndices::Ptr getPointCloudIndices(const cv::Rect& rect, IMAGE_WIDTH image_width,int bias_x);
 
     void extractPointsByIndices(pcl::PointIndices::Ptr indices, const PointCloudXYZ::Ptr ref_pts, PointCloudXYZ::Ptr extracted_pts, bool is_negative,bool is_organised);
 
-    void icpPoseRefine(vector<ClusterData>& cluster_data, pcl::IterativeClosestPoint<pcl::PointXYZ, pcl::PointXYZ> &icp, PointCloudXYZ::Ptr pc, int bias_x, bool is_viz);
+    void icpPoseRefine(vector<ClusterData>& cluster_data, pcl::IterativeClosestPoint<pcl::PointXYZ, pcl::PointXYZ> &icp, PointCloudXYZ::Ptr pc, IMAGE_WIDTH image_width, int bias_x, bool is_viz);
 
-    void icpNonLinearPoseRefine(vector<ClusterData>& cluster_data, PointCloudXYZ::Ptr pc, int bias_x);
+    void icpNonLinearPoseRefine(vector<ClusterData>& cluster_data, PointCloudXYZ::Ptr pc, IMAGE_WIDTH image_width, int bias_x);
 
     void euclidianClustering(PointCloudXYZ::Ptr pts,float dist);
 
