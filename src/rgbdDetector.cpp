@@ -767,11 +767,12 @@ void rgbdDetector::hypothesisVerification(vector<ClusterData>& cluster_data, flo
         }
         int model_pts=it->model_pc->points.size();
 
-        pcl::visualization::PCLVisualizer v("check");
-        pcl::visualization::PointCloudColorHandlerRandom<pcl::PointXYZ> color(it->model_pc);
-        v.addPointCloud(it->scene_pc,"scene");
-        v.addPointCloud(it->model_pc,color,"model");
-        v.spin();
+//        pcl::visualization::PCLVisualizer v("check");
+//        pcl::visualization::PointCloudColorHandlerRandom<pcl::PointXYZ> color(it->model_pc);
+//        v.addPointCloud(it->scene_pc,"scene");
+//        v.addPointCloud(it->model_pc,color,"model");
+//        v.spin();
+//        v.close();
 
         double collision_rate = (double)count/(double)model_pts;
         if(collision_rate<thresh)
@@ -1023,6 +1024,37 @@ void rgbdDetector::readLinemodTemplateParams(const std::string fileName,
    }
 
    fs.release ();
+}
+
+pointcloud_publisher::pointcloud_publisher(ros::NodeHandle& nh, const string &topic)
+{
+    publisher = nh.advertise<sensor_msgs::PointCloud2>(topic,1);
+    pc_msg.header.frame_id = "/camera_link";
+    pc_msg.header.stamp = ros::Time::now();
+}
+
+void pointcloud_publisher::publish(PointCloudXYZ::Ptr pc,const Scalar& color)
+{
+    pcl::PointCloud<pcl::PointXYZRGB>::Ptr pc_rgb(new pcl::PointCloud<pcl::PointXYZRGB>);
+    pcl::copyPointCloud(*pc,*pc_rgb);
+
+    //pc_msg.header.stamp = ros::Time::now();
+    pcl::toROSMsg(*pc_rgb,pc_msg);
+
+    sensor_msgs::PointCloud2Iterator<uint8_t> iter_r(pc_msg, "r");
+    sensor_msgs::PointCloud2Iterator<uint8_t> iter_g(pc_msg, "g");
+    sensor_msgs::PointCloud2Iterator<uint8_t> iter_b(pc_msg, "b");
+    vector<pcl::PointXYZRGB,Eigen::aligned_allocator<pcl::PointXYZRGB> >::iterator it = pc_rgb->begin();
+
+    for(;it!=pc_rgb->end();++it,++iter_r,++iter_g,++iter_b)
+    {
+        *iter_r = color[0];
+        *iter_g = color[1];
+        *iter_b = color[2];
+    }
+
+    publisher.publish(pc_msg);
+
 }
 
 

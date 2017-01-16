@@ -159,6 +159,7 @@ add_executable(linemod_detect_node src/linemod_detect.cpp src/linemod_icp.cpp sr
 add_executable(linemod_ensenso_detect_node src/linemod_ensenso_detect.cpp src/linemod_icp.cpp src/linemod_pointcloud.cpp)
 add_executable(linemod_carmine_detect_node src/linemod_carmine_detect.cpp src/linemod_icp.cpp src/linemod_pointcloud.cpp)
 add_executable(linemod_dataset_detect_node src/linemod_dataset_detect.cpp src/linemod_icp.cpp src/linemod_pointcloud.cpp)
+add_executable(picking_demo_node src/picking_demo.cpp src/linemod_icp.cpp src/linemod_pointcloud.cpp)
 
 ## Add cmake target dependencies of the executable
 ## same as for the library above
@@ -207,6 +208,13 @@ target_link_libraries(linemod_carmine_detect_node
 )
 
 target_link_libraries(linemod_dataset_detect_node
+  ${catkin_LIBRARIES}
+  ${OpenCV_LIBRARIES}
+  ${PCL_LIBRARIES}
+  rgbdDetector
+)
+
+target_link_libraries(picking_demo_node
   ${catkin_LIBRARIES}
   ${OpenCV_LIBRARIES}
   ${PCL_LIBRARIES}

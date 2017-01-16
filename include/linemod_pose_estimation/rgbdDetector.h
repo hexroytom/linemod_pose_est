@@ -1,6 +1,18 @@
 #ifndef RGBDDETECTOR_H
 #define RGBDDETECTOR_H
 
+//ros
+#include <ros/ros.h>
+#include <sensor_msgs/Image.h>
+#include <sensor_msgs/PointCloud2.h>
+#include <sensor_msgs/point_cloud2_iterator.h>
+#include <sensor_msgs/CameraInfo.h>
+#include <tf/transform_broadcaster.h>
+#include <cv_bridge/cv_bridge.h>
+#include <image_transport/image_transport.h>
+#include <message_filters/synchronizer.h>
+#include <message_filters/subscriber.h>
+
 //std
 #include <iostream>
 
@@ -16,6 +28,7 @@
 
 //pcl
 #include <pcl/visualization/pcl_visualizer.h>
+#include <pcl/visualization/cloud_viewer.h>
 #include <pcl/point_types.h>
 #include <pcl/registration/icp.h>
 #include <pcl/registration/icp_nl.h>
@@ -169,6 +182,17 @@ public:
                                    double& renderer_far);
 
 
+};
+
+class pointcloud_publisher
+{
+public:
+    ros::Publisher publisher;
+    sensor_msgs::PointCloud2 pc_msg;
+    boost::shared_ptr<sensor_msgs::PointCloud2Modifier> modifier;
+public:
+    pointcloud_publisher(ros::NodeHandle& nh,const string& topic);
+    void publish(PointCloudXYZ::Ptr pc, const Scalar& color);
 };
 
 #endif // RGBDDETECTOR_H

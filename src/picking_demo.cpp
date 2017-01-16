@@ -1,16 +1,5 @@
 #include <linemod_pose_estimation/rgbdDetector.h>
 
-//ros
-#include <ros/ros.h>
-#include <sensor_msgs/Image.h>
-#include <sensor_msgs/PointCloud2.h>
-#include <sensor_msgs/CameraInfo.h>
-#include <tf/transform_broadcaster.h>
-#include <cv_bridge/cv_bridge.h>
-#include <image_transport/image_transport.h>
-#include <message_filters/synchronizer.h>
-#include <message_filters/subscriber.h>
-
 //ork
 #include "linemod_icp.h"
 #include "linemod_pointcloud.h"
@@ -28,84 +17,24 @@
 //std
 #include <math.h>
 
-//time synchronize
-#define APPROXIMATE
-
-#ifdef EXACT
-#include <message_filters/sync_policies/exact_time.h>
-#endif
-#ifdef APPROXIMATE
-#include <message_filters/sync_policies/approximate_time.h>
-#endif
-
-#ifdef EXACT
-typedef message_filters::sync_policies::ExactTime<sensor_msgs::Image, sensor_msgs::Image> SyncPolicy;
-#endif
-#ifdef APPROXIMATE
-typedef message_filters::sync_policies::ApproximateTime<sensor_msgs::Image, sensor_msgs::Image> SyncPolicy;
-#endif
-
 typedef pcl::PointCloud<pcl::PointXYZ> PointCloudXYZ;
 
 //namespace
 using namespace cv;
 using namespace std;
 
-struct LinemodData{
-  LinemodData(
-          std::vector<cv::Vec3f> _pts_ref,
-          std::vector<cv::Vec3f> _pts_model,
-          std::string _match_class,
-          int _match_id,
-          const float _match_sim,
-          const cv::Point location_,
-          const float _icp_distance,
-          const cv::Matx33f _r,
-          const cv::Vec3f _t){
-    pts_ref = _pts_ref;
-    pts_model = _pts_model;
-    match_class = _match_class;
-    match_id=_match_id;
-    match_sim = _match_sim;
-    location=location_;
-    icp_distance = _icp_distance;
-    r = _r;
-    t = _t;
-    check_done = false;
-  }
-  std::vector<cv::Vec3f> pts_ref;
-  std::vector<cv::Vec3f> pts_model;
-  std::string match_class;
-  int match_id;
-  float match_sim;
-  float icp_distance;
-  cv::Matx33f r;
-  cv::Vec3f t;
-  cv::Point location;
-  bool check_done;
-};
-
-
 class linemod_detect
 {
+
     ros::NodeHandle nh;
     image_transport::ImageTransport it;
     ros::Subscriber sub_cam_info;
-    //image_transport::Subscriber sub_color_;
-    //image_transport::Subscriber sub_depth;
-    //image_transport::Publisher pub_color_;
-    //image_transport::Publisher pub_depth;
-    message_filters::Subscriber<sensor_msgs::Image> sub_color;
-    message_filters::Subscriber<sensor_msgs::Image> sub_depth;
-    message_filters::Synchronizer<SyncPolicy> sync;
     ros::Publisher pc_rgb_pub_;
     ros::Publisher extract_pc_pub;
-
-    //voting space
-    unsigned int* accumulator;
     uchar clustering_step_;
 
 public:
+
     Ptr<linemod::Detector> detector;
     float threshold;
     bool is_K_read;
@@ -137,19 +66,12 @@ public:
     float icp_dist_min_;
     float orientation_clustering_th_;
 
-    LinemodPointcloud *pci_real_icpin_ref;
-    LinemodPointcloud *pci_real_icpin_model;
-    LinemodPointcloud *pci_real_nonICP_model;
-    LinemodPointcloud *pci_real_condition_filter_model;
     std::string depth_frame_id_;
 
     pcl::IterativeClosestPoint<pcl::PointXYZ, pcl::PointXYZ> icp;
 
-    //std::vector <object_recognition_core::db::ObjData> objs_;
-    std::vector<LinemodData> objs_;//pose result after clustering process
-    std::vector<LinemodData> final_poses;//pose result after clustering process
-
     tf::TransformBroadcaster tf_broadcaster;
+
     //Service client
     ros::ServiceClient ensenso_registImg_client;
     ros::ServiceClient ensenso_singlePc_client;
@@ -165,10 +87,7 @@ public:
 public:
     linemod_detect(std::string template_file_name,std::string renderer_params_name,std::string mesh_path,float detect_score_threshold,int icp_max_iter,float icp_tr_epsilon,float icp_fitness_threshold, float icp_maxCorresDist, uchar clustering_step,float orientation_clustering_th):
         it(nh),
-        sub_color(nh,"/camera/rgb/image_rect_color",1),
-        sub_depth(nh,"/camera/depth_registered/image_raw",1),
         depth_frame_id_("camera_link"),
-        sync(SyncPolicy(1), sub_color, sub_depth),
         px_match_min_(0.25f),
         icp_dist_min_(0.06f),
         bias_x(56),
@@ -208,12 +127,6 @@ public:
         renderer_iterator_->radius_max_ = float(renderer_radius_max);
         renderer_iterator_->radius_step_ = float(renderer_radius_step);
 
-        pci_real_icpin_model = new LinemodPointcloud(nh, "real_icpin_model", depth_frame_id_);
-        pci_real_icpin_ref = new LinemodPointcloud(nh, "real_icpin_ref", depth_frame_id_);
-        pci_real_condition_filter_model=new LinemodPointcloud(nh, "real_condition_filter", depth_frame_id_);
-        //pci_real_nonICP_model= new LinemodPointcloud(nh, "real_nonICP_model", depth_frame_id_);
-        //pci_real_1stICP_model= new LinemodPointcloud(nh, "real_1stICP_model", depth_frame_id_);
-
         icp.setMaximumIterations (icp_max_iter);
         icp.setMaxCorrespondenceDistance (icp_maxCorresDist);
         icp.setTransformationEpsilon (icp_tr_epsilon);
@@ -238,11 +151,9 @@ public:
 
     virtual ~linemod_detect()
     {
-        if(accumulator)
-            free(accumulator);
     }
 
-    void detect_cb(const sensor_msgs::Image& msg_rgb,sensor_msgs::PointCloud2 pc,bool is_rgb)
+    void detect_cb(const sensor_msgs::Image& msg_rgb,sensor_msgs::PointCloud2& pc,bool is_rgb,vector<ClusterData>& cluster_data)
     {
         //Convert image mgs to OpenCV
         Mat mat_rgb;
@@ -317,7 +228,6 @@ public:
 
         //Compute criteria for each cluster
         //Output: Vecotor of ClusterData, each element of which contains index, score, flag of checking.
-        vector<ClusterData> cluster_data;
         t=cv::getTickCount ();
         rgbd_detector.cluster_scoring(map_match,mat_depth,cluster_data);
         t=(cv::getTickCount ()-t)/cv::getTickFrequency ();
@@ -347,11 +257,17 @@ public:
             rectangle(display,cluster_data[ii].rect,Scalar(0,0,255),2);
         }
 
+        cv::startWindowThread();
+        namedWindow("display");
         imshow("display",display);
         cv::waitKey (0);
+        destroyWindow("display");
+        cv::waitKey (1);
 
         //Viz in point cloud
-        vizResultPclViewer(cluster_data,pc_ptr);
+        //vizResultPclViewer(cluster_data,pc_ptr);
+
+        return;
 
     }
 
@@ -555,11 +471,18 @@ public:
         view.spin();
     }
 
+    ros::NodeHandle& getNodeHandle()
+    {
+        return nh;
+    }
+
 };
 
 int main(int argc,char** argv)
 {
     ros::init (argc,argv,"linemod_detect");
+
+    //Load Linemod parameters
     std::string linemod_template_path;
     std::string renderer_param_path;
     std::string model_stl_path;
@@ -587,7 +510,6 @@ int main(int argc,char** argv)
 
     ensenso::RegistImage srv;
     srv.request.is_rgb=true;
-    ros::Rate loop(1);
 
     string img_path=argv[11];
     string pc_path=argv[12];
@@ -605,11 +527,36 @@ int main(int argc,char** argv)
     srv.response.pointcloud.header.frame_id="/camera_link";
     srv.response.pointcloud.header.stamp=now;
 
+    pointcloud_publisher model_pc_pub(detector.getNodeHandle(),string("/rgbDetect/pick_object"));
+
     while(ros::ok())
     {
-        detector.detect_cb(srv.response.image,srv.response.pointcloud,srv.request.is_rgb);
-        loop.sleep();
+        string cmd;
+        cout<<"Start a new detetcion? Input [y] to begin, or [n] to quit. "<<endl;
+        cin>>cmd;
+        if(cmd == "y")
+        {
+            //Object detection
+            vector<ClusterData> targets;
+            detector.detect_cb(srv.response.image,srv.response.pointcloud,srv.request.is_rgb,targets);
+
+            //Select one object to pick
+                //for simple test, just pick the first one and display it.
+            ClusterData target = targets[0];            
+            model_pc_pub.publish(target.model_pc,cv::Scalar(255,0,0));
+
+            //User decide whether this object should be picked
+            cout<<"Pick up this object? Input [y] to say yes, or [n] to skip."<<endl;
+            cin >> cmd;
+            if(cmd == "y")
+            {
+                int p=0;
+            }
+
+        }
+        else if(cmd == "n")
+            break;
     }
 
-    ros::spin ();
+    ros::shutdown();
 }
