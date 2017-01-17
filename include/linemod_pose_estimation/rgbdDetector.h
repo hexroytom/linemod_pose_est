@@ -8,6 +8,8 @@
 #include <sensor_msgs/point_cloud2_iterator.h>
 #include <sensor_msgs/CameraInfo.h>
 #include <tf/transform_broadcaster.h>
+#include <tf/transform_listener.h>
+#include <tf_conversions/tf_eigen.h>
 #include <cv_bridge/cv_bridge.h>
 #include <image_transport/image_transport.h>
 #include <message_filters/synchronizer.h>
@@ -189,10 +191,12 @@ class pointcloud_publisher
 public:
     ros::Publisher publisher;
     sensor_msgs::PointCloud2 pc_msg;
-    boost::shared_ptr<sensor_msgs::PointCloud2Modifier> modifier;
+    tf::TransformBroadcaster tf_broadcaster;
 public:
     pointcloud_publisher(ros::NodeHandle& nh,const string& topic);
-    void publish(PointCloudXYZ::Ptr pc, const Scalar& color);
+    void publish(PointCloudXYZ::Ptr pc);
+    void publish(sensor_msgs::PointCloud2& pc_msg);
+    void publish(PointCloudXYZ::Ptr pc, Eigen::Affine3d pose, const Scalar& color);
 };
 
 #endif // RGBDDETECTOR_H

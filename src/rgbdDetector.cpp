@@ -504,7 +504,7 @@ void rgbdDetector::getRoughPoseByClustering(vector<ClusterData>& cluster_data,Po
         it->model_pc->width=pc_cv.cols;
         it->model_pc->height=pc_cv.rows;
         it->model_pc->resize(pc_cv.cols*pc_cv.rows);
-        it->model_pc->header.frame_id="/camera_link";
+        it->model_pc->header.frame_id="/rgb_camera_link";
 
         for(int ii=0;ii<pc_cv.rows;++ii)
         {
@@ -1028,18 +1028,30 @@ void rgbdDetector::readLinemodTemplateParams(const std::string fileName,
 
 pointcloud_publisher::pointcloud_publisher(ros::NodeHandle& nh, const string &topic)
 {
-    publisher = nh.advertise<sensor_msgs::PointCloud2>(topic,1);
-    pc_msg.header.frame_id = "/camera_link";
+    publisher = nh.advertise<sensor_msgs::PointCloud2>(topic,1);    
     pc_msg.header.stamp = ros::Time::now();
 }
 
-void pointcloud_publisher::publish(PointCloudXYZ::Ptr pc,const Scalar& color)
+void pointcloud_publisher::publish(PointCloudXYZ::Ptr pc)
+{
+    pcl::toROSMsg(*pc,pc_msg);
+    pc_msg.header.frame_id = "/rgb_camera_link";
+    publisher.publish(pc_msg);
+}
+
+void pointcloud_publisher::publish(sensor_msgs::PointCloud2& pc_msg)
+{
+    pc_msg.header.frame_id = "/rgb_camera_link";
+    publisher.publish(pc_msg);
+}
+
+void pointcloud_publisher::publish(PointCloudXYZ::Ptr pc,Eigen::Affine3d pose,const Scalar& color)
 {
     pcl::PointCloud<pcl::PointXYZRGB>::Ptr pc_rgb(new pcl::PointCloud<pcl::PointXYZRGB>);
     pcl::copyPointCloud(*pc,*pc_rgb);
 
-    //pc_msg.header.stamp = ros::Time::now();
     pcl::toROSMsg(*pc_rgb,pc_msg);
+    pc_msg.header.frame_id = "/rgb_camera_link";
 
     sensor_msgs::PointCloud2Iterator<uint8_t> iter_r(pc_msg, "r");
     sensor_msgs::PointCloud2Iterator<uint8_t> iter_g(pc_msg, "g");
@@ -1054,6 +1066,11 @@ void pointcloud_publisher::publish(PointCloudXYZ::Ptr pc,const Scalar& color)
     }
 
     publisher.publish(pc_msg);
+
+    //TF
+    tf::Transform pose_tf;
+    tf::poseEigenToTF(pose,pose_tf);
+    tf_broadcaster.sendTransform (tf::StampedTransform(pose_tf,ros::Time::now(),pc->header.frame_id,"object_frame"));
 
 }
 
