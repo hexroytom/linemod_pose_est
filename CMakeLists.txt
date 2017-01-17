@@ -161,6 +161,9 @@ add_executable(linemod_carmine_detect_node src/linemod_carmine_detect.cpp src/li
 add_executable(linemod_dataset_detect_node src/linemod_dataset_detect.cpp src/linemod_icp.cpp src/linemod_pointcloud.cpp)
 add_executable(picking_demo_node src/picking_demo.cpp src/linemod_icp.cpp src/linemod_pointcloud.cpp)
 
+#--------Tool----------#
+add_executable(depth_camera_to_rgb_camera_broadcaster src/depth_camera_to_rgb_camera_broadcaster.cpp)
+
 ## Add cmake target dependencies of the executable
 ## same as for the library above
 # add_dependencies(linemod_pose_estimation_node ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
@@ -225,6 +228,10 @@ target_link_libraries(rgbdDetector
   ${catkin_LIBRARIES}
   ${OpenCV_LIBRARIES}
   ${PCL_LIBRARIES}
+)
+
+target_link_libraries(depth_camera_to_rgb_camera_broadcaster
+  ${catkin_LIBRARIES}
 )
 
 #target_link_libraries(linemod_detect_modified_node

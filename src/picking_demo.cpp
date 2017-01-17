@@ -83,6 +83,15 @@ public:
     //Wrapper for key methods
     rgbdDetector rgbd_detector;
 
+    //tf from rgb camera to depth camera
+    Eigen::Affine3d pose_rgbTdep;
+
+    //tf from depth camera to rgb camera
+    Eigen::Affine3d pose_depTrgb;
+
+    //tf from tool0 to depth camera
+    Eigen::Affine3d pose_tool0Tdep;
+
 
 public:
     linemod_detect(std::string template_file_name,std::string renderer_params_name,std::string mesh_path,float detect_score_threshold,int icp_max_iter,float icp_tr_epsilon,float icp_fitness_threshold, float icp_maxCorresDist, uchar clustering_step,float orientation_clustering_th):
@@ -480,7 +489,7 @@ public:
     {
         //Init
         Eigen::Affine3d grasp_pose;
-        double offset = 0.025;
+        double offset = 0.0;
         Eigen::Vector3d grasp_position(target.pose.translation()[0],target.pose.translation()[1],target.pose.translation()[2]);
         Eigen::Vector4f obj_z_axis(target.pose.matrix()(0,2),target.pose.matrix()(1,2),target.pose.matrix()(2,2),0.0);
         Eigen::Vector4f cam_z_axis(0.0,0.0,1.0,0.0);
@@ -492,6 +501,7 @@ public:
         //Object faces downward
         if(theta1 <= 50.0 && theta1 >=0.0)
         {
+           offset = 0.025;
            grasp_position[0] = grasp_position[0] + offset*obj_z_axis[0]*(-1.0);
            grasp_position[1] = grasp_position[1] + offset*obj_z_axis[1]*(-1.0);
            grasp_position[2] = grasp_position[2] + offset*obj_z_axis[2]*(-1.0);
@@ -501,6 +511,7 @@ public:
         }//Object faces upward
         else if(theta1 <= 180.0 && theta1 >= 130)
         {
+            offset = 0.025;
             //position
             grasp_position[0] = grasp_position[0] + offset*obj_z_axis[0];
             grasp_position[1] = grasp_position[1] + offset*obj_z_axis[1];
@@ -513,6 +524,7 @@ public:
 
         }else
             {
+            offset = 0.028;
             //position
              grasp_position[0] = grasp_position[0] + offset*obj_y_axis[0];
              grasp_position[1] = grasp_position[1] + offset*obj_y_axis[1];
@@ -535,15 +547,6 @@ public:
 
     Eigen::Affine3d transformPose(Eigen::Affine3d& pose_rgbTgrasp)
     {
-        Eigen::Affine3d pose_baseTgrasp;
-
-        //Get tf from RGB camera to DEPTH camera
-        Eigen::Affine3d pose_rgbTdep = getRGBtoDepthTF(-51.50,42.65,-17.68,0.05,0.06,1.29);
-        Eigen::Affine3d pose_depTrgb = pose_rgbTdep.inverse();
-
-        //Get tf from TOOL0 to DEPTH camera
-        Eigen::Affine3d pose_tool0Tdep = getTool0toDepthTF(0.0652702, -0.0556041, 0.0444426,0.716241, -0.000722787, 0.00955945, 0.697788);
-
         //Get tf from BASE to TOOL0
         tf::TransformListener listener;
         tf::StampedTransform transform_stamped;
@@ -554,16 +557,17 @@ public:
         tf::poseTFToEigen(transform_stamped,pose_baseTtool0);
 
         //Get tf from BASE to OBJECT
+        Eigen::Affine3d pose_baseTgrasp;
         pose_baseTgrasp = pose_baseTtool0 * pose_tool0Tdep * pose_depTrgb * pose_rgbTgrasp;
         return pose_baseTgrasp;
     }
 
     Eigen::Affine3d getRGBtoDepthTF(double x, double y,double z, double roll,double pitch,double yaw)
     {
-        Eigen::Affine3d pose_rgbTdep;
+        Eigen::Affine3d pose_rgbTdep_;
 
         //Translation
-        pose_rgbTdep.translation()<< x/1000.0,y/1000.0,z/1000.0;
+        pose_rgbTdep_.translation()<< x/1000.0,y/1000.0,z/1000.0;
 
         //Rotation
             //Z-Y-X euler ---> yaw-pitch-roll
@@ -571,36 +575,54 @@ public:
         rotation_matrix = Eigen::AngleAxisd(yaw/180.0*M_PI,Eigen::Vector3d(0.0,0.0,1.0)) *
                           Eigen::AngleAxisd(pitch/180.0*M_PI,Eigen::Vector3d(0.0,1.0,0.0)) *
                           Eigen::AngleAxisd(roll/180.0*M_PI,Eigen::Vector3d(1.0,0.0,0.0));
-        pose_rgbTdep.linear()=rotation_matrix;
+        pose_rgbTdep_.linear()=rotation_matrix;
 
-        return pose_rgbTdep;
+        return pose_rgbTdep_;
     }
 
     Eigen::Affine3d getTool0toDepthTF(double x, double y,double z, double qw,double qx,double qy,double qz)
     {
-        Eigen::Affine3d pose_Tool0Tdep;
+        Eigen::Affine3d pose_Tool0Tdep_;
 
         //Translation
-        pose_Tool0Tdep.translation()<< x,y,z;
+        pose_Tool0Tdep_.translation()<< x,y,z;
 
         //Rotation
         Eigen::Quaterniond quat(qw,qx,qy,qz);
-        pose_Tool0Tdep.linear() = quat.toRotationMatrix();
+        pose_Tool0Tdep_.linear() = quat.toRotationMatrix();
 
-        return pose_Tool0Tdep;
+        return pose_Tool0Tdep_;
     }
 
-    //Params: TF from rgb camera to depth camera
-    void broadcastDepthToRgbTF(double x, double y,double z, double roll,double pitch,double yaw)
+    void broadcastTF(Eigen::Affine3d& pose_eigen, const string& parent_frame, const string& child_frame)
     {
-        Eigen::Affine3d pose_rgbTdep = getRGBtoDepthTF(x,y,z,roll,pitch,yaw);
-        Eigen::Affine3d pose_depTrgb = pose_rgbTdep.inverse();
-
-        tf::Transform pose_depTrgb_tf;
-        tf::poseEigenToTF(pose_depTrgb,pose_depTrgb_tf);
+        tf::Transform pose_tf;
+        tf::poseEigenToTF(pose_eigen,pose_tf);
         tf::TransformBroadcaster tf_broadcaster;
-        tf_broadcaster.sendTransform (tf::StampedTransform(pose_depTrgb_tf,ros::Time::now(),"camera_link","rgb_camera_link"));
+        tf_broadcaster.sendTransform (tf::StampedTransform(pose_tf,ros::Time::now(),parent_frame,child_frame));
+
     }
+
+    //Notice: these parameters stands for TF from rgb camera to depth camera
+    void setDepthToRGB_broadcastTF(double x, double y,double z, double roll,double pitch,double yaw)
+    {
+       //Conversion
+       pose_rgbTdep = getRGBtoDepthTF(x,y,z,roll,pitch,yaw);
+       pose_depTrgb = pose_rgbTdep.inverse();
+       //Broadcaster
+       //broadcastTF(pose_depTrgb,"camera_link","rgb_camera_link");
+    }
+
+    void setTool0tDepth_broadcastTF(double x, double y,double z, double qw,double qx,double qy,double qz)
+    {
+        //Conversion
+        pose_tool0Tdep = getTool0toDepthTF(x,y,z,qw,qx,qy,qz);
+        //Broadcaster
+        //broadcastTF(pose_tool0Tdep,"tool0","camera_link");
+    }
+
+
+
 
 };
 
@@ -658,7 +680,8 @@ int main(int argc,char** argv)
     pointcloud_publisher model_pc_pub(detector.getNodeHandle(),string("/rgbDetect/pick_object"));
 
     //Bradocast tf from rgb to depth
-    detector.broadcastDepthToRgbTF(-51.50,42.65,-17.68,0.05,0.06,1.29);
+    detector.setDepthToRGB_broadcastTF(-51.50,42.65,-17.68,0.05,0.06,1.29);
+    detector.setTool0tDepth_broadcastTF(0.0652702, -0.0556041, 0.0444426,0.716241, -0.000722787, 0.00955945, 0.697788);
 
     while(ros::ok())
     {
@@ -678,22 +701,22 @@ int main(int argc,char** argv)
             {
                 //Grasping pose generation
                 Eigen::Affine3d grasp_pose_pRGB = detector.getGraspingPose(*it_target); //frame: RGB camera
-                model_pc_pub.publish(it_target->model_pc,grasp_pose_pRGB,cv::Scalar(255,0,0));
+                model_pc_pub.publish(it_target->model_pc,it_target->pose,cv::Scalar(255,0,0));
+
+                //Transform grasping pose to robot frame
+                Eigen::Affine3d grasp_pose_pBase = detector.transformPose(grasp_pose_pRGB);
+
+                //Visuailze the grapsing pose
+                tf::Transform grasp_pose_tf_viz;
+                tf::poseEigenToTF(grasp_pose_pBase,grasp_pose_tf_viz);
+                tf::TransformBroadcaster tf_broadcaster;
+                tf_broadcaster.sendTransform (tf::StampedTransform(grasp_pose_tf_viz,ros::Time::now(),"base","grasp_frame"));
 
                 //User decide whether this object should be picked
                 cout<<"Pick up this object? Input [y] to say yes, [n] to skip, or [q] to restart detection."<<endl;
                 cin >> cmd;
                 if(cmd == "y")
                 {
-                    //Transform grasping pose to robot frame
-                    Eigen::Affine3d grasp_pose_pBase = detector.transformPose(grasp_pose_pRGB);
-
-                    //Viz for test
-                    tf::Transform grasp_pose_tf_viz;
-                    tf::poseEigenToTF(grasp_pose_pBase,grasp_pose_tf_viz);
-                    tf::TransformBroadcaster tf_broadcaster;
-                    tf_broadcaster.sendTransform (tf::StampedTransform(grasp_pose_tf_viz,ros::Time::now(),"base","grasp_frame"));
-
                     int p=0;
                 }else if (cmd == "q")
                     break;
