@@ -15,10 +15,13 @@ find_package(catkin REQUIRED COMPONENTS
   sensor_msgs
   std_msgs
   ensenso
+  trac_ik_lib
+  moveit_ros_planning_interface
 )
 # Use OpenCV 3.1.0.
 find_package (OpenCV REQUIRED)
 find_package (PCL REQUIRED)
+find_package(orocos_kdl REQUIRED)
 
 # Set include dirs
 
@@ -133,6 +136,7 @@ include_directories(
   ${OpenCV_INCLUDE_DIRS}
   ${default_INCLUDE_DIRS}
   ${PCL_INCLUDE_DIRS}
+  ${orocos_kdl_INCLUDE_DIRS}
 
 )
 
@@ -222,6 +226,7 @@ target_link_libraries(picking_demo_node
   ${OpenCV_LIBRARIES}
   ${PCL_LIBRARIES}
   rgbdDetector
+  ${orocos_kdl_LIBRARIES}
 )
 
 target_link_libraries(rgbdDetector

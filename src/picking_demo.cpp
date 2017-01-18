@@ -17,6 +17,13 @@
 //std
 #include <math.h>
 
+//moveit
+#include <moveit/move_group_interface/move_group.h>
+#include <moveit/planning_interface/planning_interface.h>
+#include <moveit/trajectory_processing/iterative_time_parameterization.h>
+#include <moveit_msgs/ExecuteKnownTrajectory.h>
+#include <moveit_msgs/DisplayTrajectory.h>
+
 typedef pcl::PointCloud<pcl::PointXYZ> PointCloudXYZ;
 
 //namespace
@@ -92,6 +99,9 @@ public:
     //tf from tool0 to depth camera
     Eigen::Affine3d pose_tool0Tdep;
 
+    //Move group
+    boost::shared_ptr<moveit::planning_interface::MoveGroup> group;
+
 
 public:
     linemod_detect(std::string template_file_name,std::string renderer_params_name,std::string mesh_path,float detect_score_threshold,int icp_max_iter,float icp_tr_epsilon,float icp_fitness_threshold, float icp_maxCorresDist, uchar clustering_step,float orientation_clustering_th):
@@ -155,6 +165,14 @@ public:
 
         //Orientation Clustering threshold
         orientation_clustering_th_=orientation_clustering_th;
+
+        //Moveit
+        group.reset();
+        group = boost::make_shared<moveit::planning_interface::MoveGroup>("manipulator");
+
+        group->setPoseReferenceFrame("/base");
+        group->setMaxVelocityScalingFactor(0.8);
+        group->setMaxAccelerationScalingFactor(0.8);
 
     }
 
@@ -621,6 +639,95 @@ public:
         //broadcastTF(pose_tool0Tdep,"tool0","camera_link");
     }
 
+    //linear interpolation for approaching the taerger. Base frame: /base.
+    bool linear_trajectory_planning(Eigen::Affine3d grasp_pose, double line_offset, double num_of_interpolation, moveit_msgs::RobotTrajectory& target_traj )
+    {
+        tf::Transform grasp_pose_tf;
+        tf::poseEigenToTF(grasp_pose,grasp_pose_tf);
+
+        //Z axis
+        tf::Matrix3x3 rot_mat=grasp_pose_tf.getBasis();
+        tf::Vector3 direc = rot_mat.getColumn(2);;
+        double step = line_offset/num_of_interpolation;
+
+        //Interpolate n points
+        std::vector<geometry_msgs::Pose> waypoints(num_of_interpolation+1);
+        geometry_msgs::Pose grasp_pose_msg;
+        tf::poseTFToMsg(grasp_pose_tf,grasp_pose_msg);
+        for(int i=0;i<waypoints.size()-1;++i)
+        {
+            geometry_msgs::Pose tmp_pose;
+            tmp_pose.position.x = grasp_pose_msg.position.x - step * direc[0] * (num_of_interpolation-i);
+            tmp_pose.position.y = grasp_pose_msg.position.y - step * direc[1] * (num_of_interpolation-i);
+            tmp_pose.position.z = grasp_pose_msg.position.z - step * direc[2] * (num_of_interpolation-i);
+            tmp_pose.orientation = grasp_pose_msg.orientation;
+            waypoints[i]=tmp_pose;
+        }
+        waypoints[num_of_interpolation]=grasp_pose_msg;
+
+        //ComputeCartesian...
+        double score=group->computeCartesianPath(waypoints,0.05,0.0,target_traj);
+
+
+        if(score > 0.95)
+        {
+            moveit::core::RobotStatePtr kinematic_state(group->getCurrentState());
+            robot_trajectory::RobotTrajectory rt(kinematic_state->getRobotModel(),"manipulator");
+            rt.setRobotTrajectoryMsg(*kinematic_state,target_traj);
+            trajectory_processing::IterativeParabolicTimeParameterization iptp;
+
+            if(iptp.computeTimeStamps(rt,0.8,0.8))
+                {
+
+                rt.getRobotTrajectoryMsg(target_traj);
+                return true;
+            }
+
+            return true;
+        }
+        else
+        {
+            ROS_ERROR("Cartessian Planning fail!");
+            return false;
+        }
+
+
+    }
+
+    void performGrasping(const moveit_msgs::RobotTrajectory& robot_traj)
+    {
+        //Moveit
+        ros::AsyncSpinner spinner(1);
+        spinner.start();
+
+        group->setMaxVelocityScalingFactor(0.8);
+        group->setMaxAccelerationScalingFactor(0.8);
+
+        moveit::planning_interface::MoveGroup::Plan planner;
+        planner.trajectory_=robot_traj;
+
+        //Viz for test
+        //        moveit_msgs::DisplayTrajectory display_traj;
+        //        display_traj.trajectory_start=planner.start_state_;
+        //        display_traj.trajectory.push_back(planner.trajectory_);
+        //        traj_publisher.publish(display_traj);
+
+        group->execute(planner);
+        spinner.stop();
+    }
+
+    void moveToLookForTargetsPose()
+    {
+        ros::AsyncSpinner spinner(1);
+        spinner.start();
+
+        group->setNamedTarget("look_for_targets");
+        group->move();
+
+        spinner.stop();
+    }
+
+
 
 
 
@@ -683,6 +790,9 @@ int main(int argc,char** argv)
     detector.setDepthToRGB_broadcastTF(-51.50,42.65,-17.68,0.05,0.06,1.29);
     detector.setTool0tDepth_broadcastTF(0.0652702, -0.0556041, 0.0444426,0.716241, -0.000722787, 0.00955945, 0.697788);
 
+    //Robot initial pose
+    detector.moveToLookForTargetsPose();
+
     while(ros::ok())
     {
         string cmd;
@@ -717,7 +827,11 @@ int main(int argc,char** argv)
                 cin >> cmd;
                 if(cmd == "y")
                 {
-                    int p=0;
+                    moveit_msgs::RobotTrajectory traj;
+                    detector.linear_trajectory_planning(grasp_pose_pBase,0.1,10,traj);
+                    detector.performGrasping(traj);
+                    sleep(2);
+                    detector.moveToLookForTargetsPose();
                 }else if (cmd == "q")
                     break;
             }
