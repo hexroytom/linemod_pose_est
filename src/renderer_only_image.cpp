@@ -153,21 +153,21 @@ int main(int argc,char** argv)
 
     if(argc<8)
         {
-        renderer_n_points_ = 450;
+        renderer_n_points_ = 150;
         renderer_angle_step_ = 10;
-        renderer_radius_min_ = 0.5;
+        renderer_radius_min_ = 0.4;
         renderer_radius_max_ = 0.7;
         renderer_radius_step_ = 0.1;
         renderer_width_ = 752;
         renderer_height_ = 480;
         renderer_near_ = 0.1;
         renderer_far_ = 1000.0;
-        renderer_focal_length_x_ = 844.5966796875;//Kinect ;//xtion 570.342;
-        renderer_focal_length_y_ = 844.5966796875;//Kinect //xtion 570.342;
-        stl_file="/home/yake/catkin_ws/src/linemod_pose_est/config/stl/t_pipe_connector.stl";
-        template_output_path="/home/yake/catkin_ws/src/linemod_pose_est/config/data/t_pipe_linemod_ensenso_templates.yml";
-        renderer_params_output_path="/home/yake/catkin_ws/src/linemod_pose_est/config/data/t_pipe_linemod_ensenso_renderer_params.yml";
-        renderer_depth_output_path="/home/yake/catkin_ws/src/linemod_pose_est/config/data/t_pipe_linemod_ensenso_renderer_depth.yml";
+        renderer_focal_length_x_ = 824.025390625;//Kinect ;//xtion 570.342;
+        renderer_focal_length_y_ = 824.025390625;//Kinect //xtion 570.342;
+        stl_file="/home/yake/catkin_ws/src/linemod_pose_est/config/stl/pipe_connector.stl";
+        template_output_path="/home/yake/catkin_ws/src/linemod_pose_est/config/data/pipe_linemod_ensenso_templates.yml";
+        renderer_params_output_path="/home/yake/catkin_ws/src/linemod_pose_est/config/data/pipe_linemod_ensenso_renderer_params.yml";
+        renderer_depth_output_path="/home/yake/catkin_ws/src/linemod_pose_est/config/data/pipe_linemod_ensenso_renderer_depth.yml";
     }else{
      renderer_n_points_ = 150;
      renderer_angle_step_ = 10;

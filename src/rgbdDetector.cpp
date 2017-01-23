@@ -504,7 +504,7 @@ void rgbdDetector::getRoughPoseByClustering(vector<ClusterData>& cluster_data,Po
         it->model_pc->width=pc_cv.cols;
         it->model_pc->height=pc_cv.rows;
         it->model_pc->resize(pc_cv.cols*pc_cv.rows);
-        it->model_pc->header.frame_id="/rgb_camera_link";
+        it->model_pc->header.frame_id="/camera_link";
 
         for(int ii=0;ii<pc_cv.rows;++ii)
         {
@@ -1035,14 +1035,14 @@ pointcloud_publisher::pointcloud_publisher(ros::NodeHandle& nh, const string &to
 void pointcloud_publisher::publish(PointCloudXYZ::Ptr pc)
 {
     pcl::toROSMsg(*pc,pc_msg);
-    pc_msg.header.frame_id = "/rgb_camera_link";
+    pc_msg.header.frame_id = "/camera_link";
     publisher.publish(pc_msg);
 }
 
-void pointcloud_publisher::publish(sensor_msgs::PointCloud2& pc_msg)
+void pointcloud_publisher::publish(sensor_msgs::PointCloud2& pc_msg_)
 {
-    pc_msg.header.frame_id = "/rgb_camera_link";
-    publisher.publish(pc_msg);
+    pc_msg_.header.frame_id = "/camera_link";
+    publisher.publish(pc_msg_);
 }
 
 void pointcloud_publisher::publish(PointCloudXYZ::Ptr pc,Eigen::Affine3d pose,const Scalar& color)
@@ -1051,7 +1051,7 @@ void pointcloud_publisher::publish(PointCloudXYZ::Ptr pc,Eigen::Affine3d pose,co
     pcl::copyPointCloud(*pc,*pc_rgb);
 
     pcl::toROSMsg(*pc_rgb,pc_msg);
-    pc_msg.header.frame_id = "/rgb_camera_link";
+    pc_msg.header.frame_id = "/camera_link";
 
     sensor_msgs::PointCloud2Iterator<uint8_t> iter_r(pc_msg, "r");
     sensor_msgs::PointCloud2Iterator<uint8_t> iter_g(pc_msg, "g");

@@ -102,6 +102,9 @@ public:
     //Move group
     boost::shared_ptr<moveit::planning_interface::MoveGroup> group;
 
+    //UR script publisher
+    ros::Publisher ur_script_pub;
+
 
 public:
     linemod_detect(std::string template_file_name,std::string renderer_params_name,std::string mesh_path,float detect_score_threshold,int icp_max_iter,float icp_tr_epsilon,float icp_fitness_threshold, float icp_maxCorresDist, uchar clustering_step,float orientation_clustering_th):
@@ -114,10 +117,9 @@ public:
         clustering_step_(clustering_step)
     {
         //Publisher
-        //pub_color_=it.advertise ("/sync_rgb",2);
-        //pub_depth=it.advertise ("/sync_depth",2);
-        pc_rgb_pub_=nh.advertise<sensor_msgs::PointCloud2>("ensenso_rgb_pc",1);
+        pc_rgb_pub_= nh.advertise<sensor_msgs::PointCloud2>("ensenso_rgb_pc",1);
         extract_pc_pub = nh.advertise<sensor_msgs::PointCloud2>("/render_pc",1);
+        ur_script_pub = nh.advertise<std_msgs::String>("/ur_driver/URScript",1);
 
         //the intrinsic matrix
         //sub_cam_info=nh.subscribe("/camera/depth/camera_info",1,&linemod_detect::read_cam_info,this);
@@ -171,8 +173,8 @@ public:
         group = boost::make_shared<moveit::planning_interface::MoveGroup>("manipulator");
 
         group->setPoseReferenceFrame("/base");
-        group->setMaxVelocityScalingFactor(0.8);
-        group->setMaxAccelerationScalingFactor(0.8);
+        group->setMaxVelocityScalingFactor(0.3);
+        group->setMaxAccelerationScalingFactor(0.3);
 
     }
 
@@ -250,7 +252,7 @@ public:
         rgbd_detector.rcd_voting(Obj_origin_dists,renderer_radius_min,clustering_step_,renderer_radius_step,matches,map_match);
 
         //Filter based on size of clusters
-        uchar thresh=10;
+        uchar thresh=5;
         rgbd_detector.cluster_filter(map_match,thresh);
 
         //Compute criteria for each cluster
@@ -269,14 +271,30 @@ public:
         t=(cv::getTickCount ()-t)/cv::getTickFrequency ();
         cout<<"Time consumed by pose clustering: "<<t<<endl;
 
-        //Pose refinement
+//        vector<ClusterData> tmp;
+//        for(int k=0;k<cluster_data.size();++k)
+//        {
+//            tmp.clear();
+//            tmp.push_back(cluster_data[k]);
+//            //Pose refinement
+//            t=cv::getTickCount ();
+//            rgbd_detector.icpPoseRefine(tmp,icp,pc_ptr,image_width,bias_x,false);
+//            t=(cv::getTickCount ()-t)/cv::getTickFrequency ();
+//            cout<<"Time consumed by pose refinement: "<<t<<endl;
+
+//            //Hypothesis verification
+//            rgbd_detector.hypothesisVerification(tmp,0.002,0.17);
+
+//            if(tmp.size() == 1)
+//            {
+//                break;
+//            }
+//        }
+
         t=cv::getTickCount ();
         rgbd_detector.icpPoseRefine(cluster_data,icp,pc_ptr,image_width,bias_x,false);
         t=(cv::getTickCount ()-t)/cv::getTickFrequency ();
         cout<<"Time consumed by pose refinement: "<<t<<endl;
-
-        //Hypothesis verification
-        rgbd_detector.hypothesisVerification(cluster_data,0.002,0.17);
 
         //Display all the bounding box
         for(int ii=0;ii<cluster_data.size();++ii)
@@ -287,12 +305,15 @@ public:
         cv::startWindowThread();
         namedWindow("display");
         imshow("display",display);
-        cv::waitKey (0);
+        cv::waitKey (1);
 //        destroyWindow("display");
 //        cv::waitKey (1);
 
         //Viz in point cloud
         //vizResultPclViewer(cluster_data,pc_ptr);
+
+//        cluster_data.clear();
+//        cluster_data=tmp;
 
         return;
 
@@ -503,7 +524,7 @@ public:
         return nh;
     }
 
-    Eigen::Affine3d getGraspingPose(ClusterData& target)
+    Eigen::Affine3d getGraspingPose_Tpipe(ClusterData& target)
     {
         //Init
         Eigen::Affine3d grasp_pose;
@@ -511,6 +532,7 @@ public:
         Eigen::Vector3d grasp_position(target.pose.translation()[0],target.pose.translation()[1],target.pose.translation()[2]);
         Eigen::Vector4f obj_z_axis(target.pose.matrix()(0,2),target.pose.matrix()(1,2),target.pose.matrix()(2,2),0.0);
         Eigen::Vector4f cam_z_axis(0.0,0.0,1.0,0.0);
+        Eigen::Vector4f cam_y_axis(0.0,1.0,0.0,0.0);
         Eigen::Vector4f obj_y_axis(target.pose.matrix()(0,1),target.pose.matrix()(1,1),target.pose.matrix()(2,1),0.0);
 
         double theta1= pcl::getAngle3D(obj_z_axis,cam_z_axis);
@@ -519,21 +541,30 @@ public:
         //Object faces downward
         if(theta1 <= 50.0 && theta1 >=0.0)
         {
-           offset = 0.025;
+           offset = 0.022;
            grasp_position[0] = grasp_position[0] + offset*obj_z_axis[0]*(-1.0);
            grasp_position[1] = grasp_position[1] + offset*obj_z_axis[1]*(-1.0);
            grasp_position[2] = grasp_position[2] + offset*obj_z_axis[2]*(-1.0);
+
+//           grasp_position[0] = grasp_position[0] + 0.008*obj_y_axis[0];
+//           grasp_position[1] = grasp_position[1] + 0.008*obj_y_axis[1];
+//           grasp_position[2] = grasp_position[2] + 0.008*obj_y_axis[2];
 
            grasp_pose = target.pose;
            grasp_pose.translation() << grasp_position[0],grasp_position[1],grasp_position[2];
         }//Object faces upward
         else if(theta1 <= 180.0 && theta1 >= 130)
         {
-            offset = 0.025;
+            offset = 0.022;
             //position
             grasp_position[0] = grasp_position[0] + offset*obj_z_axis[0];
             grasp_position[1] = grasp_position[1] + offset*obj_z_axis[1];
             grasp_position[2] = grasp_position[2] + offset*obj_z_axis[2];
+
+//            grasp_position[0] = grasp_position[0] + 0.008*obj_y_axis[0];
+//            grasp_position[1] = grasp_position[1] + 0.008*obj_y_axis[1];
+//            grasp_position[2] = grasp_position[2] + 0.008*obj_y_axis[2];
+
             grasp_pose = target.pose;
             grasp_pose.translation() << grasp_position[0],grasp_position[1],grasp_position[2];
             //orientation
@@ -542,17 +573,78 @@ public:
 
         }else
             {
-            offset = 0.028;
-            //position
-             grasp_position[0] = grasp_position[0] + offset*obj_y_axis[0];
-             grasp_position[1] = grasp_position[1] + offset*obj_y_axis[1];
-             grasp_position[2] = grasp_position[2] + offset*obj_y_axis[2];
-             grasp_pose = target.pose;
-             grasp_pose.translation() << grasp_position[0],grasp_position[1],grasp_position[2];
-             //orientation
-             grasp_pose *= Eigen::AngleAxisd(1.57,Eigen::Vector3d(1.0,0.0,0.0));
+            double theta= pcl::getAngle3D(obj_y_axis,cam_z_axis);
+            theta=theta/M_PI*180.0;
+            if(theta>90)
+            {
+                offset = 0.008;
+                //position
+                grasp_position[0] = grasp_position[0] + offset*obj_y_axis[0];
+                grasp_position[1] = grasp_position[1] + offset*obj_y_axis[1];
+                grasp_position[2] = grasp_position[2] + offset*obj_y_axis[2];
+                grasp_pose = target.pose;
+                grasp_pose.translation() << grasp_position[0],grasp_position[1],grasp_position[2];
+                //orientation
+                grasp_pose *= Eigen::AngleAxisd(1.57,Eigen::Vector3d(1.0,0.0,0.0));
+            }else
+            {
+                offset = 0.01;
+                //position
+                grasp_position[0] = grasp_position[0] + offset*obj_y_axis[0];
+                grasp_position[1] = grasp_position[1] + offset*obj_y_axis[1];
+                grasp_position[2] = grasp_position[2] + offset*obj_y_axis[2];
+                grasp_pose = target.pose;
+                grasp_pose.translation() << grasp_position[0],grasp_position[1],grasp_position[2];
+                //orientation
+                grasp_pose *= Eigen::AngleAxisd(-1.57,Eigen::Vector3d(1.0,0.0,0.0));
+            }
 
         }
+
+        //Viz for test
+//        tf::Transform grasp_pose_tf_viz;
+//        tf::poseEigenToTF(grasp_pose,grasp_pose_tf_viz);
+//        tf::TransformBroadcaster tf_broadcaster;
+//        tf_broadcaster.sendTransform (tf::StampedTransform(grasp_pose_tf_viz,ros::Time::now(),"camera_link","grasp_frame"));
+
+        return grasp_pose;
+    }
+
+    Eigen::Affine3d getGraspingPose_pipe(ClusterData& target)
+    {
+        //Init
+        Eigen::Affine3d grasp_pose;
+        double offset = 0.0;
+        Eigen::Vector3d grasp_position(target.pose.translation()[0],target.pose.translation()[1],target.pose.translation()[2]);
+        Eigen::Vector4f obj_z_axis(target.pose.matrix()(0,2),target.pose.matrix()(1,2),target.pose.matrix()(2,2),0.0);
+        Eigen::Vector4f cam_z_axis(0.0,0.0,1.0,0.0);
+        Eigen::Vector4f cam_y_axis(0.0,1.0,0.0,0.0);
+        Eigen::Vector4f obj_y_axis(target.pose.matrix()(0,1),target.pose.matrix()(1,1),target.pose.matrix()(2,1),0.0);
+
+        double theta1= pcl::getAngle3D(obj_z_axis,cam_z_axis);
+        theta1=theta1/M_PI*180.0;
+
+        grasp_pose = target.pose;
+
+        if(theta1>90.0)
+            {
+            //Rotate
+            grasp_pose *= Eigen::AngleAxisd(M_PI,Eigen::Vector3d(0.0,1.0,0.0));
+
+            offset = 0.022;
+            grasp_position[0] = grasp_position[0] + offset*grasp_pose.matrix()(0,2)*(-1.0);
+            grasp_position[1] = grasp_position[1] + offset*grasp_pose.matrix()(1,2)*(-1.0);
+            grasp_position[2] = grasp_position[2] + offset*grasp_pose.matrix()(2,2)*(-1.0);
+        }else
+            {
+            offset = 0.022;
+            grasp_position[0] = grasp_position[0] + offset*grasp_pose.matrix()(0,2)*(-1.0);
+            grasp_position[1] = grasp_position[1] + offset*grasp_pose.matrix()(1,2)*(-1.0);
+            grasp_position[2] = grasp_position[2] + offset*grasp_pose.matrix()(2,2)*(-1.0);
+        }
+        grasp_pose.translation()<<grasp_position[0],grasp_position[1],grasp_position[2];
+
+
 
         //Viz for test
 //        tf::Transform grasp_pose_tf_viz;
@@ -575,8 +667,8 @@ public:
         tf::poseTFToEigen(transform_stamped,pose_baseTtool0);
 
         //Get tf from BASE to OBJECT
-        Eigen::Affine3d pose_baseTgrasp;
-        pose_baseTgrasp = pose_baseTtool0 * pose_tool0Tdep * pose_depTrgb * pose_rgbTgrasp;
+        Eigen::Affine3d pose_baseTgrasp;        
+        pose_baseTgrasp = pose_baseTtool0 * pose_tool0Tdep * pose_rgbTgrasp;
         return pose_baseTgrasp;
     }
 
@@ -676,7 +768,7 @@ public:
             rt.setRobotTrajectoryMsg(*kinematic_state,target_traj);
             trajectory_processing::IterativeParabolicTimeParameterization iptp;
 
-            if(iptp.computeTimeStamps(rt,0.8,0.8))
+            if(iptp.computeTimeStamps(rt,0.3,0.3))
                 {
 
                 rt.getRobotTrajectoryMsg(target_traj);
@@ -694,17 +786,84 @@ public:
 
     }
 
-    void performGrasping(const moveit_msgs::RobotTrajectory& robot_traj)
+    void moveToPrePickPose(Eigen::Affine3d& grasp_pose,double z_offset)
+    {
+        geometry_msgs::Pose goalPose;
+
+        //Orientation
+        tf::TransformListener listener;
+        tf::StampedTransform transform_stamped;
+        tf::Transform transform_tmp;
+        ros::Time now(ros::Time::now());
+        listener.waitForTransform("base","suction_cup",now,ros::Duration(1.5));
+        listener.lookupTransform("base","suction_cup",ros::Time(0),transform_stamped);
+        transform_tmp= transform_stamped;
+        tf::poseTFToMsg(transform_tmp,goalPose);
+
+        //Position
+        goalPose.position.x=grasp_pose.translation()[0];
+        goalPose.position.y=grasp_pose.translation()[1];
+        goalPose.position.z=grasp_pose.translation()[2]+z_offset;
+
+        //Move
+        ros::AsyncSpinner spinner(1);
+        spinner.start();
+
+        group->setMaxVelocityScalingFactor(0.6);
+        group->setMaxAccelerationScalingFactor(0.6);
+        group->setPoseTarget(goalPose);
+        moveit::planning_interface::MoveGroup::Plan planner;
+        bool is_success=group->plan(planner);
+        if(is_success)
+        {
+            group->move();
+            sleep(1);
+        }else{
+            cout<<"Move to pre-pick pose: Planning fail!"<<endl;
+        }
+        spinner.stop();
+    }
+
+    void moveToPrePlacePose(Eigen::Affine3d& grasp_pose,double z_offset)
+    {
+        tf::Transform pose_tf;
+        geometry_msgs::Pose pose_msg;
+        tf::poseEigenToTF(grasp_pose,pose_tf);
+        tf::poseTFToMsg(pose_tf,pose_msg);
+        pose_msg.position.z+=z_offset;
+
+        //Move
+        ros::AsyncSpinner spinner(1);
+        spinner.start();
+        group->setMaxVelocityScalingFactor(0.6);
+        group->setMaxAccelerationScalingFactor(0.6);
+        group->setPoseTarget(pose_msg);
+        moveit::planning_interface::MoveGroup::Plan planner;
+        bool is_success=group->plan(planner);
+        if(is_success)
+        {
+            group->move();
+            sleep(0.5);
+        }else{
+            cout<<"Move to pre-place pose: Planning fail!"<<endl;
+        }
+        spinner.stop();
+
+
+    }
+
+    void moveToPickTargetPose(const moveit_msgs::RobotTrajectory& robot_traj)
     {
         //Moveit
         ros::AsyncSpinner spinner(1);
         spinner.start();
 
-        group->setMaxVelocityScalingFactor(0.8);
-        group->setMaxAccelerationScalingFactor(0.8);
+        group->setMaxVelocityScalingFactor(0.3);
+        group->setMaxAccelerationScalingFactor(0.3);
 
         moveit::planning_interface::MoveGroup::Plan planner;
         planner.trajectory_=robot_traj;
+        planner.trajectory_.joint_trajectory.points[0].time_from_start=ros::Duration(0);
 
         //Viz for test
         //        moveit_msgs::DisplayTrajectory display_traj;
@@ -713,23 +872,91 @@ public:
         //        traj_publisher.publish(display_traj);
 
         group->execute(planner);
+        sleep(1.5);
         spinner.stop();
     }
 
-    void moveToLookForTargetsPose()
+    void moveToLookForTargetsPose(double speed_scale_factor)
     {
         ros::AsyncSpinner spinner(1);
         spinner.start();
 
+        group->setMaxVelocityScalingFactor(speed_scale_factor);
+        group->setMaxAccelerationScalingFactor(speed_scale_factor);
         group->setNamedTarget("look_for_targets");
         group->move();
+        sleep(1);
 
         spinner.stop();
     }
 
+    void moveToPLaceTargetsPose(Eigen::Affine3d& grasp_pose, double z_offset)
+    {
+        ros::AsyncSpinner spinner(1);
+        spinner.start();
 
+        tf::Transform pose_tf;
+        geometry_msgs::Pose pose_msg;
+        tf::poseEigenToTF(grasp_pose,pose_tf);
+        tf::poseTFToMsg(pose_tf,pose_msg);
+        pose_msg.position.z+=z_offset;
 
+        //Move
+        group->setMaxVelocityScalingFactor(0.4);
+        group->setMaxAccelerationScalingFactor(0.4);
+        group->setPoseTarget(pose_msg);
+        moveit::planning_interface::MoveGroup::Plan planner;
+        bool is_success=group->plan(planner);
+        if(is_success)
+        {
+            group->move();
+            sleep(1);
+        }else{
+            cout<<"Move to pre-place pose: Planning fail!"<<endl;
+        }
 
+        //group->setNamedTarget("place_target");
+        vector<double> joint_angles(6);
+        joint_angles[0]=13.16/180.0*M_PI;
+        joint_angles[1]=-83.80/180.0*M_PI;
+        joint_angles[2]=-97.89/180.0*M_PI;
+        joint_angles[3]=-77.18/180.0*M_PI;
+        joint_angles[4]=82.11/180.0*M_PI;
+        joint_angles[5]=-34.23/180.0*M_PI;
+        group->setJointValueTarget(joint_angles);
+        is_success=group->plan(planner);
+        if(is_success)
+        {
+            group->move();
+            //sleep(0.5);
+        }else{
+            cout<<"Move to place pose: Planning fail!"<<endl;
+        }
+        sleep(1);
+        spinner.stop();
+    }
+
+    void pickTarget()
+    {
+       std_msgs::String cmd;
+       cmd.data="set_digital_out(0,True)";
+       ur_script_pub.publish(cmd);
+       sleep(2);
+    }
+
+    void placeTarget()
+    {
+       std_msgs::String cmd;
+       cmd.data="set_digital_out(0,False)";
+       ur_script_pub.publish(cmd);
+    }
+
+    void getImages(ensenso::RegistImage& srv)
+    {
+        ensenso_registImg_client.call(srv);
+        int p=0;
+
+    }
 
 };
 
@@ -765,7 +992,7 @@ int main(int argc,char** argv)
 
     ensenso::RegistImage srv;
     srv.request.is_rgb=true;
-
+   //-----------------------------------images from dataset----------------------------------//
     string img_path=argv[11];
     string pc_path=argv[12];
     ros::Time now =ros::Time::now();
@@ -779,19 +1006,23 @@ int main(int argc,char** argv)
     PointCloudXYZ::Ptr pc(new PointCloudXYZ);
     pcl::io::loadPCDFile(pc_path,*pc);
     pcl::toROSMsg(*pc,srv.response.pointcloud);
-    srv.response.pointcloud.header.frame_id="/rgb_camera_link";
+    srv.response.pointcloud.header.frame_id="/camera_link";
     srv.response.pointcloud.header.stamp=now;
+
+
 
     //Publisher for visualize pointcloud in Rviz
     pointcloud_publisher scene_pc_pub(detector.getNodeHandle(),string("/rgbDetect/scene"));
     pointcloud_publisher model_pc_pub(detector.getNodeHandle(),string("/rgbDetect/pick_object"));
 
     //Bradocast tf from rgb to depth
-    detector.setDepthToRGB_broadcastTF(-51.50,42.65,-17.68,0.05,0.06,1.29);
-    detector.setTool0tDepth_broadcastTF(0.0652702, -0.0556041, 0.0444426,0.716241, -0.000722787, 0.00955945, 0.697788);
+    detector.setDepthToRGB_broadcastTF(-54.23,43.00,-25.59,0.25,-0.32,1.31);
+    detector.setTool0tDepth_broadcastTF(0.0487324, -0.0513127, 0.0444524,0.727184, 0.0136583, 0.012435, 0.686194);
 
     //Robot initial pose
-    detector.moveToLookForTargetsPose();
+    detector.moveToLookForTargetsPose(0.4);
+
+
 
     while(ros::ok())
     {
@@ -800,40 +1031,63 @@ int main(int argc,char** argv)
         cin>>cmd;
         if(cmd == "y")
         {
-            //Object detection
-            vector<ClusterData> targets;
-            detector.detect_cb(srv.response.image,srv.response.pointcloud,srv.request.is_rgb,targets);
-
-            //Select one object to pick
-                //for simple test, just pick the first one and display it.
-            scene_pc_pub.publish(pc);
-            for(vector<ClusterData>::iterator it_target=targets.begin();it_target!=targets.end();++it_target)
+            while(ros::ok())
             {
-                //Grasping pose generation
-                Eigen::Affine3d grasp_pose_pRGB = detector.getGraspingPose(*it_target); //frame: RGB camera
-                model_pc_pub.publish(it_target->model_pc,it_target->pose,cv::Scalar(255,0,0));
+                //detector.getImages(srv);
+                srv.response.pointcloud.header.frame_id="/camera_link";
 
-                //Transform grasping pose to robot frame
-                Eigen::Affine3d grasp_pose_pBase = detector.transformPose(grasp_pose_pRGB);
+                //Object detection
+                vector<ClusterData> targets;
+                detector.detect_cb(srv.response.image,srv.response.pointcloud,srv.request.is_rgb,targets);
 
-                //Visuailze the grapsing pose
-                tf::Transform grasp_pose_tf_viz;
-                tf::poseEigenToTF(grasp_pose_pBase,grasp_pose_tf_viz);
-                tf::TransformBroadcaster tf_broadcaster;
-                tf_broadcaster.sendTransform (tf::StampedTransform(grasp_pose_tf_viz,ros::Time::now(),"base","grasp_frame"));
-
-                //User decide whether this object should be picked
-                cout<<"Pick up this object? Input [y] to say yes, [n] to skip, or [q] to restart detection."<<endl;
-                cin >> cmd;
-                if(cmd == "y")
+                //Select one object to pick
+                scene_pc_pub.publish(srv.response.pointcloud);
+                for(vector<ClusterData>::iterator it_target=targets.begin();it_target!=targets.end();++it_target)
                 {
+                    //Grasping pose generation
+                    Eigen::Affine3d grasp_pose_pDepth = detector.getGraspingPose_pipe(*it_target); //frame: Depth camera
+                    model_pc_pub.publish(it_target->model_pc,it_target->pose,cv::Scalar(255,0,0));
+
+                    //Transform grasping pose to robot frame
+                    Eigen::Affine3d grasp_pose_pBase = detector.transformPose(grasp_pose_pDepth);
+
+                    //Visuailze the grapsing pose
+                    tf::Transform grasp_pose_tf_viz;
+                    tf::poseEigenToTF(grasp_pose_pBase,grasp_pose_tf_viz);
+                    tf::TransformBroadcaster tf_broadcaster;
+                    tf_broadcaster.sendTransform (tf::StampedTransform(grasp_pose_tf_viz,ros::Time::now(),"base","grasp_frame"));
+
+                    //User decide whether this object should be picked
+                    //                cout<<"Pick up this object? Input [y] to say yes, [n] to skip, or [q] to restart detection."<<endl;
+                    //                cin >> cmd;
+                    //                if(cmd == "y")
+                    //                {
+                    detector.moveToPrePickPose(grasp_pose_pBase,0.10);
                     moveit_msgs::RobotTrajectory traj;
-                    detector.linear_trajectory_planning(grasp_pose_pBase,0.1,10,traj);
-                    detector.performGrasping(traj);
-                    sleep(2);
-                    detector.moveToLookForTargetsPose();
-                }else if (cmd == "q")
+                    bool is_succeed=detector.linear_trajectory_planning(grasp_pose_pBase,0.05,10,traj);
+                    if(is_succeed)
+                    {
+                        detector.moveToPickTargetPose(traj);
+                        detector.pickTarget();
+                        detector.moveToPLaceTargetsPose(grasp_pose_pBase,0.3); // grasp_pose_pBase is used as a pre-place pose
+                        detector.placeTarget();
+                    }else
+                    {
+                        cout<<"Skip to next object"<<endl;
+                    }
+                    //Go back to initial state
+                    detector.moveToLookForTargetsPose(0.4);
+
+                    //                }else if (cmd == "q")
+                    //                    break;
+                }
+
+                if(targets.size() == 0)
+                {
+                    cout<<"No object is found."<<endl;
                     break;
+
+                }
             }
 
         }
