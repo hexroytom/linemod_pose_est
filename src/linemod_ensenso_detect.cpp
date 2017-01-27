@@ -1,5 +1,5 @@
 #include <linemod_pose_estimation/rgbdDetector.h>
-
+#include <pcl/visualization/pcl_visualizer.h>
 //ros
 #include <ros/ros.h>
 #include <sensor_msgs/Image.h>
@@ -244,6 +244,11 @@ public:
 
     void detect_cb(const sensor_msgs::Image& msg_rgb,sensor_msgs::PointCloud2 pc,bool is_rgb)
     {
+        //Publisher for visualize pointcloud in Rviz
+        pointcloud_publisher scene_pc_pub(nh,string("/rgbDetect/scene"));
+        pointcloud_publisher model_pc_pub(nh,string("/rgbDetect/pick_object"));
+        pointcloud_publisher scene_cropped_pc_pub(nh,string("/rgbDetect/scene_roi"));
+
         //Convert image mgs to OpenCV
         Mat mat_rgb;
         Mat mat_grey;
@@ -312,7 +317,7 @@ public:
         rgbd_detector.rcd_voting(Obj_origin_dists,renderer_radius_min,clustering_step_,renderer_radius_step,matches,map_match);
 
         //Filter based on size of clusters
-        uchar thresh=10;
+        uchar thresh=5;
         rgbd_detector.cluster_filter(map_match,thresh);
 
         //Compute criteria for each cluster
@@ -342,16 +347,20 @@ public:
         rgbd_detector.hypothesisVerification(cluster_data,0.002,0.17);
 
         //Display all the bounding box
-        for(int ii=0;ii<cluster_data.size();++ii)
+        scene_pc_pub.publish (pc_ptr);
+        for(vector<ClusterData>::iterator it = cluster_data.begin();it!=cluster_data.end();++it)
         {
-            rectangle(display,cluster_data[ii].rect,Scalar(0,0,255),2);
+            rectangle(display,it->rect,Scalar(0,0,255),2);
+            model_pc_pub.publish (it->model_pc,it->pose,cv::Scalar(255,0,0));
+            scene_cropped_pc_pub.publish(it->scene_pc,it->pose,cv::Scalar(0,255,0));
+            imshow("display",display);
+            cv::waitKey (0);
         }
 
-        imshow("display",display);
-        cv::waitKey (0);
+
 
         //Viz in point cloud
-        vizResultPclViewer(cluster_data,pc_ptr);
+        //vizResultPclViewer(cluster_data,pc_ptr);
 
     }
 
@@ -553,6 +562,11 @@ public:
             view.addCoordinateSystem(0.08,obj_pose_f);
         }
         view.spin();
+    }
+
+    ros::NodeHandle& getNodeHandle()
+    {
+        return nh;
     }
 
 };

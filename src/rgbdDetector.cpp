@@ -440,8 +440,11 @@ void rgbdDetector::getRoughPoseByClustering(vector<ClusterData>& cluster_data,Po
 //                 imshow("mask",mask);
 //                 waitKey(0);
 
-        //Save mask
+        //Save mask and ROI
         it->mask=mask;
+        it->rect=rect;
+        it->rect.x=X;
+        it->rect.y=Y;
 
         //Save orientation, T_match and K_matrix
         it->orientation=R_match;
@@ -453,92 +456,216 @@ void rgbdDetector::getRoughPoseByClustering(vector<ClusterData>& cluster_data,Po
         it->pose.linear()=R_eig;
 
         //Save position
-//                 int x=it->rect.x+it->rect.width/2;
-//                 int y=it->rect.y+it->rect.height/2;
         int x=X+rect.width/2;
         int y=Y+rect.height/2;
         //Add offset to x due to previous cropping operation
         x+=bias_x;
-        pcl::PointXYZ bbox_center =pc->at(x,y);
-
-        //Deal with the situation that there is a hole in ROI or in the model pointcloud during rendering
-        if(pcl_isnan(bbox_center.x) || pcl_isnan(bbox_center.y) || pcl_isnan(bbox_center.z) || is_center_hole)
-        {
-            PointCloudXYZ::Ptr pts_tmp(new PointCloudXYZ());
-            pcl::PointIndices::Ptr indices_tmp(new pcl::PointIndices());
-            vector<int> index_tmp;
-
-            indices_tmp=getPointCloudIndices(it,image_width,bias_x);
-            extractPointsByIndices(indices_tmp,pc,pts_tmp,false,false);
-            pcl::removeNaNFromPointCloud(*pts_tmp,*pts_tmp,index_tmp);
-
-            //Comptute centroid
-            Eigen::Matrix<double,4,1> centroid;
-            if(pcl::compute3DCentroid<pcl::PointXYZ,double>(*pts_tmp,centroid)!=0)
-            {
-                //Replace the Nan center point with centroid
-                bbox_center.x=centroid[0];
-                bbox_center.y=centroid[1];
-                bbox_center.z=centroid[2];
-            }
-            else
-            {
-               ROS_ERROR("Pose clustering: unable to compute centroid of the pointcloud!");
-            }
-        }
-
-        //Notice: No hole in the center
-        if(!is_center_hole)
-        {
-            bbox_center.z+=D_aver;
-        }
-        it->position=cv::Vec3d(bbox_center.x,bbox_center.y,bbox_center.z);
-        it->pose.translation()<< bbox_center.x,bbox_center.y,bbox_center.z;
 
         //Get render point cloud
         Mat pc_cv;
         cv::depthTo3d(depth_render,it->K_matrix,pc_cv);    //mm ---> m
-
-
-        pcl::PointCloud<pcl::PointXYZ> pts;
         it->model_pc->width=pc_cv.cols;
         it->model_pc->height=pc_cv.rows;
         it->model_pc->resize(pc_cv.cols*pc_cv.rows);
         it->model_pc->header.frame_id="/camera_link";
-
         for(int ii=0;ii<pc_cv.rows;++ii)
         {
             double* row_ptr=pc_cv.ptr<double>(ii);
             for(int jj=0;jj<pc_cv.cols;++jj)
             {
-                   double* data =row_ptr+jj*3;
-                   //cout<<" "<<data[0]<<" "<<data[1]<<" "<<data[2]<<endl;
-                   it->model_pc->at(jj,ii).x=data[0];
-                   it->model_pc->at(jj,ii).y=data[1];
-                   it->model_pc->at(jj,ii).z=data[2];
-
+                double* data =row_ptr+jj*3;
+                //cout<<" "<<data[0]<<" "<<data[1]<<" "<<data[2]<<endl;
+                it->model_pc->at(jj,ii).x=data[0];
+                it->model_pc->at(jj,ii).y=data[1];
+                it->model_pc->at(jj,ii).z=data[2];
             }
         }
 
-        //Transform the pc
-//                 pcl::PointXYZ pt_scene(bbox_center.x,bbox_center.y,bbox_center.z-D_aver);
-//                 pcl::PointXYZ pt_model=it->model_pc->at(it->model_pc->width/2,it->model_pc->height/2);
+        //Get scene point cloud indices
+        pcl::PointIndices::Ptr indices(new pcl::PointIndices);
+        indices=getPointCloudIndices(it,image_width,bias_x);
+        //Extract scene pc according to indices
+        PointCloudXYZ::Ptr scene_pc(new PointCloudXYZ);
+        extractPointsByIndices(indices,pc,scene_pc,false,false);
+        //Remove Nan points
+        vector<int> index;
+        it->model_pc->is_dense=false;
+        pcl::removeNaNFromPointCloud(*(it->model_pc),*(it->model_pc),index);
+        pcl::removeNaNFromPointCloud(*scene_pc,*scene_pc,index);
+        //Statistical outlier removal
+        statisticalOutlierRemoval(scene_pc,50,1.0);
+        euclidianClustering(scene_pc,0.01);
+//        float leaf_size=0.002;
+//        voxelGridFilter(scene_pc,leaf_size);
+//        voxelGridFilter(it->model_pc,leaf_size);
 
-        pcl::PointXYZ pt_scene(bbox_center.x,bbox_center.y,bbox_center.z);
-        pcl::PointXYZ pt_model(0,0,Trans_aver);
+        //Save scene point cloud for later HV
+        it->scene_pc=scene_pc;
 
-        pcl::PointXYZ translation(pt_scene.x -pt_model.x,pt_scene.y -pt_model.y,pt_scene.z -pt_model.z);
-        Eigen::Affine3d transform =Eigen::Affine3d::Identity();
-        transform.translation()<<translation.x, translation.y, translation.z;
+        //Get position
+        Eigen::Vector3d position(0.0,0.0,0.0);
+        Eigen::Affine3d transform;
 
+        //getPositionByROICenter(it,pc,x,y,Trans_aver,transform,position);
+        //getPositionByDistanceOffset (it,pc,x,y,image_width,bias_x,D_aver,Trans_aver,is_center_hole,position,transform);
+        getPositionBySurfaceCentroid (it->scene_pc,it->model_pc,Trans_aver,position,transform);
+
+        //Tranlsate pointcloud
+        it->pose.translation()<< position[0],position[1],position[2];
         PointCloudXYZ::Ptr transformed_cloud (new PointCloudXYZ ());
         pcl::transformPointCloud(*it->model_pc,*transformed_cloud,transform);
-
-        //it->model_pc.swap(transformed_cloud);
-
         pcl::copyPointCloud(*transformed_cloud,*(it->model_pc));
     }
 }
+
+void rgbdDetector::getPositionByDistanceOffset(vector<ClusterData>::iterator it,PointCloudXYZ::Ptr pc,int x_index,int y_index,IMAGE_WIDTH image_width,int bias_x,double DistanceOffset,double DistanceFromCamToObj,bool is_center_hole,Eigen::Vector3d& position, Eigen::Affine3d& transform)
+{
+    pcl::PointXYZ bbox_center =pc->at(x_index,y_index);
+    //Deal with the situation that there is a hole in ROI or in the model pointcloud during rendering
+    if(pcl_isnan(bbox_center.x) || pcl_isnan(bbox_center.y) || pcl_isnan(bbox_center.z) || is_center_hole)
+    {
+        PointCloudXYZ::Ptr pts_tmp(new PointCloudXYZ());
+        pcl::PointIndices::Ptr indices_tmp(new pcl::PointIndices());
+        vector<int> index_tmp;
+
+        indices_tmp=getPointCloudIndices(it,image_width,bias_x);
+        extractPointsByIndices(indices_tmp,pc,pts_tmp,false,false);
+        pcl::removeNaNFromPointCloud(*pts_tmp,*pts_tmp,index_tmp);
+
+        //Comptute centroid
+        Eigen::Matrix<double,4,1> centroid;
+        if(pcl::compute3DCentroid<pcl::PointXYZ,double>(*pts_tmp,centroid)!=0)
+        {
+            //Replace the Nan center point with centroid
+            bbox_center.x=centroid[0];
+            bbox_center.y=centroid[1];
+            bbox_center.z=centroid[2];
+        }
+        else
+        {
+           ROS_ERROR("Pose clustering: unable to compute centroid of the pointcloud!");
+        }
+    }
+
+    //Notice: No hole in the center
+    if(!is_center_hole)
+    {
+        bbox_center.z+=DistanceOffset;
+    }
+
+    position = Eigen::Vector3d(bbox_center.x,bbox_center.y,bbox_center.z);
+
+    //Compute translation
+    pcl::PointXYZ scene_pt(bbox_center.x,bbox_center.y,bbox_center.z);
+    pcl::PointXYZ model_pt(0,0,DistanceFromCamToObj);
+    pcl::PointXYZ translation(scene_pt.x -model_pt.x,scene_pt.y -model_pt.y,scene_pt.z -model_pt.z);
+    transform =Eigen::Affine3d::Identity();
+    transform.translation()<<translation.x, translation.y, translation.z;
+}
+
+void rgbdDetector::getPositionByROICenter(vector<ClusterData>::iterator it,PointCloudXYZ::Ptr pc,int x_index_scene,int y_index_scene,double DistanceFromCamToObj,Eigen::Affine3d& transform,Eigen::Vector3d& position)
+{
+    pcl::PointXYZ scene_pt =pc->at(x_index_scene,y_index_scene);
+    int x_index_model=it->rect.width/2;
+    int y_index_model=it->rect.height/2;
+    pcl::PointXYZ model_pt = it->model_pc->at(x_index_model,y_index_model);
+    int offset=0;
+
+    //Only when both scene point and model point are vaild, can the computation of translation continues
+    while(pcl_isnan(scene_pt.x) || pcl_isnan(model_pt.x))
+    {
+        offset++;
+        if(offset>it->rect.width/2)
+        {
+            cout<<"Error: getPositionByCenterSurface"<<endl;
+            cout<<"None of the scene-model point pairs is vaild";
+            break;
+        }
+        x_index_scene+=offset;
+        x_index_model+=offset;
+        scene_pt =pc->at(x_index_scene,y_index_scene);
+        model_pt = it->model_pc->at(x_index_model,y_index_model);
+    }
+
+    //Compute translation
+    pcl::PointXYZ translation(scene_pt.x -model_pt.x,scene_pt.y -model_pt.y,scene_pt.z -model_pt.z);
+    transform =Eigen::Affine3d::Identity();
+    transform.translation()<<translation.x, translation.y, translation.z;
+
+    //Compute position
+    position = Eigen::Vector3d(0.0+translation.x,0.0+translation.y,DistanceFromCamToObj+translation.z);
+
+
+}
+
+void rgbdDetector::getPositionBySurfaceCentroid(PointCloudXYZ::Ptr scene_pc,PointCloudXYZ::Ptr model_pc,double DistanceFromCamToObj,Eigen::Vector3d& position,Eigen::Affine3d& transform)
+{
+    //Get scene points centroid
+    Eigen::Matrix<double,4,1> scene_centroid;
+    pcl::PointXYZ scene_surface_centroid;
+    bool is_point_valid=true;
+    if(pcl::compute3DCentroid<pcl::PointXYZ,double>(*scene_pc,scene_centroid)!=0)
+    {
+        //Search nearest point to centroid point
+        int K = 1;
+        std::vector<int> pointIdxNKNSearch;
+        std::vector<float> pointNKNSquaredDistance;
+        float octree_res=0.001;
+        pcl::octree::OctreePointCloudSearch<pcl::PointXYZ>::Ptr octree(new pcl::octree::OctreePointCloudSearch<pcl::PointXYZ>(octree_res));
+
+        octree->setInputCloud(scene_pc);
+        octree->addPointsFromInputCloud();
+        if (octree->nearestKSearch (pcl::PointXYZ(scene_centroid[0],scene_centroid[1],scene_centroid[2]), K, pointIdxNKNSearch, pointNKNSquaredDistance) > 0)
+        {
+            scene_surface_centroid=scene_pc->points[pointIdxNKNSearch[0]];
+        }
+    }
+    else
+    {
+        cout<<"Error: getPositionBySurfaceCentroid"<<endl;
+        cout<<"Can not compute centroid of scene pointcloud!"<<endl;
+        is_point_valid=false;
+    }
+
+    //Get model points centroid
+    Eigen::Matrix<double,4,1> model_centroid;
+    pcl::PointXYZ model_surface_centroid;
+    if(pcl::compute3DCentroid<pcl::PointXYZ,double>(*model_pc,model_centroid)!=0)
+    {
+        //Search nearest point to centroid point
+        int K = 1;
+        std::vector<int> pointIdxNKNSearch;
+        std::vector<float> pointNKNSquaredDistance;
+        float octree_res=0.001;
+        pcl::octree::OctreePointCloudSearch<pcl::PointXYZ>::Ptr octree(new pcl::octree::OctreePointCloudSearch<pcl::PointXYZ>(octree_res));
+
+        //First, from model points
+        octree->setInputCloud(model_pc);
+        octree->addPointsFromInputCloud();
+        if (octree->nearestKSearch (pcl::PointXYZ(model_centroid[0],model_centroid[1],model_centroid[2]), K, pointIdxNKNSearch, pointNKNSquaredDistance) > 0)
+        {
+            model_surface_centroid=model_pc->points[pointIdxNKNSearch[0]];
+        }
+    }
+    else
+    {
+        cout<<"Error: getPositionBySurfaceCentroid"<<endl;
+        cout<<"Can not compute centroid of model pointcloud!"<<endl;
+        is_point_valid=false;
+    }
+
+    if(is_point_valid)
+    {
+        //Compute translation
+        pcl::PointXYZ translation(scene_surface_centroid.x -model_surface_centroid.x,scene_surface_centroid.y -model_surface_centroid.y,scene_surface_centroid.z -model_surface_centroid.z);
+        transform =Eigen::Affine3d::Identity();
+        transform.translation()<<translation.x, translation.y, translation.z;
+
+        //Compute position
+        position = Eigen::Vector3d(0.0+translation.x,0.0+translation.y,DistanceFromCamToObj+translation.z);
+    }
+}
+
 
 bool rgbdDetector::orientationCompare(Eigen::Matrix3d& orien1,Eigen::Matrix3d& orien2,double thresh)
 {
@@ -567,50 +694,50 @@ void rgbdDetector::icpPoseRefine(vector<ClusterData>& cluster_data,pcl::Iterativ
     int id=0;
     for(vector<ClusterData>::iterator it = cluster_data.begin();it!=cluster_data.end();++it)
     {
-       //Get scene point cloud indices
-        pcl::PointIndices::Ptr indices(new pcl::PointIndices);
-        indices=getPointCloudIndices(it,image_width,bias_x);
-       //Extract scene pc according to indices
-        PointCloudXYZ::Ptr scene_pc(new PointCloudXYZ);
-        extractPointsByIndices(indices,pc,scene_pc,false,false);
+//       //Get scene point cloud indices
+//        pcl::PointIndices::Ptr indices(new pcl::PointIndices);
+//        indices=getPointCloudIndices(it,image_width,bias_x);
+//       //Extract scene pc according to indices
+//        PointCloudXYZ::Ptr scene_pc(new PointCloudXYZ);
+//        extractPointsByIndices(indices,pc,scene_pc,false,false);
 
-        //Viz for test
-        if(is_viz)
-        {
-            string model_str="model";
-            string scene_str="scene";
-            stringstream ss;
-            ss<<id;
-            model_str+=ss.str();
-            scene_str+=ss.str();
-            pcl::visualization::PointCloudColorHandlerRandom<pcl::PointXYZ> color(it->model_pc);
-            v->addPointCloud(scene_pc,scene_str);
-            v->addPointCloud(it->model_pc,color,model_str);
-            v->spin();
-        }
+//        //Viz for test
+//        if(is_viz)
+//        {
+//            string model_str="model";
+//            string scene_str="scene";
+//            stringstream ss;
+//            ss<<id;
+//            model_str+=ss.str();
+//            scene_str+=ss.str();
+//            pcl::visualization::PointCloudColorHandlerRandom<pcl::PointXYZ> color(it->model_pc);
+//            v->addPointCloud(scene_pc,scene_str);
+//            v->addPointCloud(it->model_pc,color,model_str);
+//            v->spin();
+//        }
 
-        //Remove Nan points
-        vector<int> index;
-        it->model_pc->is_dense=false;
-        pcl::removeNaNFromPointCloud(*(it->model_pc),*(it->model_pc),index);
-        pcl::removeNaNFromPointCloud(*scene_pc,*scene_pc,index);
+//        //Remove Nan points
+//        vector<int> index;
+//        it->model_pc->is_dense=false;
+//        pcl::removeNaNFromPointCloud(*(it->model_pc),*(it->model_pc),index);
+//        pcl::removeNaNFromPointCloud(*scene_pc,*scene_pc,index);
 
-        //Statistical outlier removal
-        statisticalOutlierRemoval(scene_pc,50,1.0);
+//        //Statistical outlier removal
+//        statisticalOutlierRemoval(scene_pc,50,1.0);
 
-        //euclidianClustering(scene_pc,0.01);
+//        //euclidianClustering(scene_pc,0.01);
 
-//                 float leaf_size=0.002;
-//                 voxelGridFilter(scene_pc,leaf_size);
-//                 voxelGridFilter(it->model_pc,leaf_size);
+////                 float leaf_size=0.002;
+////                 voxelGridFilter(scene_pc,leaf_size);
+////                 voxelGridFilter(it->model_pc,leaf_size);
 
-        //Save scene point cloud for later HV
-        it->scene_pc=scene_pc;
+//        //Save scene point cloud for later HV
+//        it->scene_pc=scene_pc;
 
         //Coarse alignment
         icp.setRANSACOutlierRejectionThreshold(0.02);
         icp.setInputSource (it->model_pc);
-        icp.setInputTarget (scene_pc);
+        icp.setInputTarget (it->scene_pc);
         icp.align (*(it->model_pc));
         if(!icp.hasConverged())
         {
@@ -635,7 +762,7 @@ void rgbdDetector::icpPoseRefine(vector<ClusterData>& cluster_data,pcl::Iterativ
             model_str+=ss.str();
             scene_str+=ss.str();
             pcl::visualization::PointCloudColorHandlerRandom<pcl::PointXYZ> color(it->model_pc);
-            v->updatePointCloud(scene_pc,scene_str);
+            v->updatePointCloud(it->scene_pc,scene_str);
             v->updatePointCloud(it->model_pc,color,model_str);
             v->spin();
         }
@@ -646,7 +773,7 @@ void rgbdDetector::icpPoseRefine(vector<ClusterData>& cluster_data,pcl::Iterativ
         icp.setMaximumIterations(20);
         icp.setMaxCorrespondenceDistance(0.01);
         icp.setInputSource (it->model_pc);
-        icp.setInputTarget (scene_pc);
+        icp.setInputTarget (it->scene_pc);
         icp.align (*(it->model_pc));
         if(!icp.hasConverged())
         {
@@ -671,7 +798,7 @@ void rgbdDetector::icpPoseRefine(vector<ClusterData>& cluster_data,pcl::Iterativ
             model_str+=ss.str();
             scene_str+=ss.str();
             pcl::visualization::PointCloudColorHandlerRandom<pcl::PointXYZ> color(it->model_pc);
-            v->updatePointCloud(scene_pc,scene_str);
+            v->updatePointCloud(it->scene_pc,scene_str);
             v->updatePointCloud(it->model_pc,color,model_str);
             v->spin();
         }
@@ -881,6 +1008,7 @@ void rgbdDetector::icpNonLinearPoseRefine(vector<ClusterData>& cluster_data,Poin
 
     }
 }
+
 
 //Utility
 pcl::PointIndices::Ptr rgbdDetector::getPointCloudIndices(vector<ClusterData>::iterator& it, IMAGE_WIDTH image_width,int bias_x)
