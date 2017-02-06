@@ -338,18 +338,27 @@ public:
         cout<<"Time consumed by pose clustering: "<<t<<endl;
 
         //Pose refinement
-        t=cv::getTickCount ();
-        rgbd_detector.icpPoseRefine(cluster_data,icp,pc_ptr,image_width,bias_x,false);
-        t=(cv::getTickCount ()-t)/cv::getTickFrequency ();
-        cout<<"Time consumed by pose refinement: "<<t<<endl;
+//        t=cv::getTickCount ();
+//        rgbd_detector.icpPoseRefine(cluster_data,icp,pc_ptr,image_width,bias_x,false);
+//        t=(cv::getTickCount ()-t)/cv::getTickFrequency ();
+//        cout<<"Time consumed by pose refinement: "<<t<<endl;
 
         //Hypothesis verification
-        rgbd_detector.hypothesisVerification(cluster_data,0.002,0.17);
+        //rgbd_detector.hypothesisVerification(cluster_data,0.002,0.17);
 
         //Display all the bounding box
         scene_pc_pub.publish (pc_ptr);
         for(vector<ClusterData>::iterator it = cluster_data.begin();it!=cluster_data.end();++it)
         {
+            //Display all grasping pose
+            Eigen::Affine3d grasp_pose;
+            rgbd_detector.graspingPoseBasedOnRegionGrowing (it->scene_pc,grasp_pose);
+
+            tf::Transform grasp_pose_tf_viz;
+            tf::poseEigenToTF(grasp_pose,grasp_pose_tf_viz);
+            tf::TransformBroadcaster tf_broadcaster;
+            tf_broadcaster.sendTransform (tf::StampedTransform(grasp_pose_tf_viz,ros::Time::now(),"camera_link","grasp_frame"));
+
             rectangle(display,it->rect,Scalar(0,0,255),2);
             model_pc_pub.publish (it->model_pc,it->pose,cv::Scalar(255,0,0));
             scene_cropped_pc_pub.publish(it->scene_pc,it->pose,cv::Scalar(0,255,0));

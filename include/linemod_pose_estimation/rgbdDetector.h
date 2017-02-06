@@ -24,6 +24,7 @@
 #include <eigen3/Eigen/Geometry>
 #include <eigen3/Eigen/Core>
 
+
 //opencv
 #include <opencv2/opencv.hpp>
 #include <opencv2/rgbd/rgbd.hpp>
@@ -38,12 +39,20 @@
 #include <pcl/filters/filter.h>
 #include <pcl/filters/extract_indices.h>
 #include <pcl/common/common.h>
+#include <pcl/common/centroid.h>
 #include <pcl_conversions/pcl_conversions.h>
 #include <pcl/filters/median_filter.h>
 #include <pcl/filters/voxel_grid.h>
 #include <pcl/segmentation/extract_clusters.h>
+#include <pcl/segmentation/region_growing.h>
 #include <pcl/filters/statistical_outlier_removal.h>
 #include <pcl/octree/octree.h>
+#include <pcl/keypoints/uniform_sampling.h>
+#include <pcl/features/normal_3d_omp.h>
+#include <pcl/features/shot_omp.h>
+#include <pcl/recognition/cg/hough_3d.h>
+#include <pcl/features/board.h>
+
 
 //ork
 #include <object_recognition_renderer/renderer3d.h>
@@ -108,6 +117,11 @@ bool sortXyCluster(const vector<pair<int,int> >& cluster1,const vector<pair<int,
     return(cluster1.size()>cluster2.size());
 }
 
+bool sortRegionIndx(const pcl::PointIndices& indice1,const pcl::PointIndices& indice2)
+{
+    return(indice1.indices.size()>indice2.indices.size());
+}
+
 class rgbdDetector
 {
 
@@ -162,6 +176,16 @@ public:
     void voxelGridFilter(PointCloudXYZ::Ptr pts, float leaf_size);
 
     void hypothesisVerification(vector<ClusterData>& cluster_data, float octree_res, float thresh);
+
+    void getPositionByDistanceOffset(vector<ClusterData>::iterator it, PointCloudXYZ::Ptr pc, int x_index, int y_index, IMAGE_WIDTH image_width, int bias_x, double DistanceOffset, double DistanceFromCamToObj, bool is_center_hole, Eigen::Vector3d& position, Eigen::Affine3d& transform);
+
+    void getPositionByROICenter(vector<ClusterData>::iterator it,PointCloudXYZ::Ptr pc,int x_index_scene,int y_index_scene,double DistanceFromCamToObj,Eigen::Affine3d& transform,Eigen::Vector3d& position);
+
+    void getPositionBySurfaceCentroid(PointCloudXYZ::Ptr scene_pc,PointCloudXYZ::Ptr model_pc,double DistanceFromCamToObj,Eigen::Vector3d& position,Eigen::Affine3d& transform);
+
+    void getPoseByLocalDescriptor(PointCloudXYZ::Ptr scene_pc, PointCloudXYZ::Ptr model_pc, double DistanceFromCamToObj,Eigen::Affine3d& pose, Eigen::Vector3d &position);
+
+    void graspingPoseBasedOnRegionGrowing(PointCloudXYZ::Ptr scene_pc, Eigen::Affine3d& grasping_pose);
 
     //Utilities
     cv::Ptr<cv::linemod::Detector> readLinemod(const std::string& filename);

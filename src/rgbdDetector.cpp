@@ -509,13 +509,130 @@ void rgbdDetector::getRoughPoseByClustering(vector<ClusterData>& cluster_data,Po
         //getPositionByROICenter(it,pc,x,y,Trans_aver,transform,position);
         //getPositionByDistanceOffset (it,pc,x,y,image_width,bias_x,D_aver,Trans_aver,is_center_hole,position,transform);
         getPositionBySurfaceCentroid (it->scene_pc,it->model_pc,Trans_aver,position,transform);
+        //getPoseByLocalDescriptor (it->scene_pc,it->model_pc,Trans_aver,transform,position);
 
         //Tranlsate pointcloud
         it->pose.translation()<< position[0],position[1],position[2];
+        //it->pose.linear() = transform.linear () * it->pose.linear();
         PointCloudXYZ::Ptr transformed_cloud (new PointCloudXYZ ());
         pcl::transformPointCloud(*it->model_pc,*transformed_cloud,transform);
         pcl::copyPointCloud(*transformed_cloud,*(it->model_pc));
     }
+}
+
+void rgbdDetector::getPoseByLocalDescriptor(PointCloudXYZ::Ptr scene_pc,PointCloudXYZ::Ptr model_pc,double DistanceFromCamToObj,Eigen::Affine3d& transform,Eigen::Vector3d& position)
+{
+    //Params
+    int k_neigh_norest = 50;
+    float radius_unisamp = 0.002f;
+    float descr_rad_ = 0.02f;
+    float rf_rad_ = 0.015f;
+    float cg_size_ = 0.01f;
+    float cg_thresh_ = 5.0f;
+
+    //Normal estimation
+    pcl::NormalEstimationOMP<pcl::PointXYZ, pcl::Normal> norm_est;
+    norm_est.setKSearch (k_neigh_norest);
+        //scene
+    pcl::PointCloud<pcl::Normal>::Ptr scene_normals(new pcl::PointCloud<pcl::Normal>);
+    norm_est.setInputCloud (scene_pc);
+    norm_est.compute (*scene_normals);
+        //model
+    pcl::PointCloud<pcl::Normal>::Ptr model_normals(new pcl::PointCloud<pcl::Normal>);
+    norm_est.setInputCloud (model_pc);
+    norm_est.compute (*model_normals);
+
+    //Keypoints detection: Uniform sampling
+        //scene
+    pcl::PointCloud<pcl::PointXYZ>::Ptr scene_keypoints(new pcl::PointCloud<pcl::PointXYZ>);
+    pcl::copyPointCloud (*scene_pc,*scene_keypoints);
+    voxelGridFilter (scene_keypoints,radius_unisamp);
+        //model
+    pcl::PointCloud<pcl::PointXYZ>::Ptr model_keypoints(new pcl::PointCloud<pcl::PointXYZ>);
+    pcl::copyPointCloud (*model_pc,*model_keypoints);
+    voxelGridFilter (model_keypoints,radius_unisamp);
+
+    //SHOT description
+    pcl::SHOTEstimationOMP<pcl::PointXYZ, pcl::Normal, pcl::SHOT352> descr_est;
+    descr_est.setRadiusSearch (descr_rad_);
+        //model
+    pcl::PointCloud<pcl::SHOT352>::Ptr model_descriptors (new pcl::PointCloud<pcl::SHOT352> ());
+    descr_est.setInputCloud (model_keypoints);
+    descr_est.setInputNormals (model_normals);
+    descr_est.setSearchSurface (model_pc);
+    descr_est.compute (*model_descriptors);
+        //scene
+        pcl::PointCloud<pcl::SHOT352>::Ptr scene_descriptors (new pcl::PointCloud<pcl::SHOT352> ());
+    descr_est.setInputCloud (scene_keypoints);
+    descr_est.setInputNormals (scene_normals);
+    descr_est.setSearchSurface (scene_pc);
+    descr_est.compute (*scene_descriptors);
+
+    //  Find Model-Scene Correspondences with KdTree
+    //
+    pcl::CorrespondencesPtr model_scene_corrs (new pcl::Correspondences ());
+
+    pcl::KdTreeFLANN<pcl::SHOT352> match_search;
+    match_search.setInputCloud (model_descriptors);
+
+    //  For each scene keypoint descriptor, find nearest neighbor into the model keypoints descriptor cloud and add it to the correspondences vector.
+    for (size_t i = 0; i < scene_descriptors->size (); ++i)
+    {
+      std::vector<int> neigh_indices (1);
+      std::vector<float> neigh_sqr_dists (1);
+      if (!pcl_isfinite (scene_descriptors->at (i).descriptor[0])) //skipping NaNs
+      {
+        continue;
+      }
+      int found_neighs = match_search.nearestKSearch (scene_descriptors->at (i), 1, neigh_indices, neigh_sqr_dists);
+      if(found_neighs == 1 && neigh_sqr_dists[0] < 0.5f) //  add match only if the squared descriptor distance is less than 0.25 (SHOT descriptor distances are between 0 and 1 by design)
+      {
+        pcl::Correspondence corr (neigh_indices[0], static_cast<int> (i), neigh_sqr_dists[0]);
+        model_scene_corrs->push_back (corr);
+      }
+    }
+
+    //  Compute (Keypoints) Reference Frames only for Hough
+    //
+    pcl::PointCloud<pcl::ReferenceFrame>::Ptr model_rf (new pcl::PointCloud<pcl::ReferenceFrame> ());
+    pcl::PointCloud<pcl::ReferenceFrame>::Ptr scene_rf (new pcl::PointCloud<pcl::ReferenceFrame> ());
+
+    pcl::BOARDLocalReferenceFrameEstimation<pcl::PointXYZ, pcl::Normal, pcl::ReferenceFrame> rf_est;
+    rf_est.setFindHoles (true);
+    rf_est.setRadiusSearch (rf_rad_);
+
+    rf_est.setInputCloud (model_keypoints);
+    rf_est.setInputNormals (model_normals);
+    rf_est.setSearchSurface (model_pc);
+    rf_est.compute (*model_rf);
+
+    rf_est.setInputCloud (scene_keypoints);
+    rf_est.setInputNormals (scene_normals);
+    rf_est.setSearchSurface (scene_pc);
+    rf_est.compute (*scene_rf);
+
+    //  Clustering
+    pcl::Hough3DGrouping<pcl::PointXYZ, pcl::PointXYZ, pcl::ReferenceFrame, pcl::ReferenceFrame> clusterer;
+    clusterer.setHoughBinSize (cg_size_);
+    clusterer.setHoughThreshold (cg_thresh_);
+    clusterer.setUseInterpolation (true);
+    clusterer.setUseDistanceWeight (false);
+
+    clusterer.setInputCloud (model_keypoints);
+    clusterer.setInputRf (model_rf);
+    clusterer.setSceneCloud (scene_keypoints);
+    clusterer.setSceneRf (scene_rf);
+    clusterer.setModelSceneCorrespondences (model_scene_corrs);
+
+    std::vector<Eigen::Matrix4f, Eigen::aligned_allocator<Eigen::Matrix4f> > rototranslations;
+    std::vector<pcl::Correspondences> clustered_corrs;
+
+    //clusterer.cluster (clustered_corrs);
+    clusterer.recognize (rototranslations, clustered_corrs);
+
+    //Compute position
+    transform.matrix ()=rototranslations[0].cast<double>();
+    position = Eigen::Vector3d(0.0+transform(0,3),0.0+transform(1,3),DistanceFromCamToObj+transform(2,3));
 }
 
 void rgbdDetector::getPositionByDistanceOffset(vector<ClusterData>::iterator it,PointCloudXYZ::Ptr pc,int x_index,int y_index,IMAGE_WIDTH image_width,int bias_x,double DistanceOffset,double DistanceFromCamToObj,bool is_center_hole,Eigen::Vector3d& position, Eigen::Affine3d& transform)
@@ -666,6 +783,81 @@ void rgbdDetector::getPositionBySurfaceCentroid(PointCloudXYZ::Ptr scene_pc,Poin
     }
 }
 
+void rgbdDetector::graspingPoseBasedOnRegionGrowing(PointCloudXYZ::Ptr scene_pc,Eigen::Affine3d& grasping_pose)
+{
+    //Params
+    float k_neigh_norest=50;
+    float k_neigh_reg=30;
+    grasping_pose=Eigen::Affine3d::Identity ();
+
+    //Normal estimation
+    pcl::NormalEstimationOMP<pcl::PointXYZ, pcl::Normal> norm_est;
+    norm_est.setKSearch (k_neigh_norest);
+    pcl::PointCloud<pcl::Normal>::Ptr scene_normals(new pcl::PointCloud<pcl::Normal>);
+    norm_est.setInputCloud (scene_pc);
+    norm_est.compute (*scene_normals);
+
+    //Region growing
+    pcl::RegionGrowing<pcl::PointXYZ, pcl::Normal> reg;
+    reg.setMinClusterSize (50);
+    reg.setMaxClusterSize (1000000);
+    pcl::search::Search<pcl::PointXYZ>::Ptr tree = boost::shared_ptr<pcl::search::Search<pcl::PointXYZ> > (new pcl::search::KdTree<pcl::PointXYZ>);
+    reg.setSearchMethod (tree);
+    reg.setNumberOfNeighbours (k_neigh_reg);
+    reg.setInputCloud (scene_pc);
+    //reg.setIndices (indices);
+    reg.setInputNormals (scene_normals);
+    /*The following two lines are most important part in the algorithm initialization, because they are responsible for the mentioned smoothness constraint.
+     * First method sets the angle in radians that will be used as the allowable range for the normals deviation.
+     * If the deviation between points normals is less than smoothness threshold then they are suggested to be in the same cluster (new point - the tested one - will be added to the cluster).
+     * The second one is responsible for curvature threshold.
+     * If two points have a small normals deviation then the disparity between their curvatures is tested. And if this value is less than curvature threshold then the algorithm will continue the growth of the cluster using new added point.*/
+    reg.setSmoothnessThreshold (10.0 / 180.0 * M_PI);
+    reg.setCurvatureThreshold (1);
+    std::vector <pcl::PointIndices> clusters;
+    reg.extract (clusters);
+    std::sort(clusters.begin(),clusters.end(),sortRegionIndx);
+    PointCloudXYZ::Ptr segmented_pc(new PointCloudXYZ);
+    extractPointsByIndices (boost::make_shared<pcl::PointIndices>(clusters[0]),scene_pc,segmented_pc,false,false);
+
+    //search centroid
+    //Get scene points centroid
+    Eigen::Matrix<double,4,1> centroid;
+    pcl::PointXYZ scene_surface_centroid;
+    pcl::Normal scene_surface_normal;
+    bool is_point_valid=true;
+    if(pcl::compute3DCentroid<pcl::PointXYZ,double>(*segmented_pc,centroid)!=0)
+    {
+        //Search nearest point to centroid point
+        int K = 1;
+        std::vector<int> pointIdxNKNSearch;
+        std::vector<float> pointNKNSquaredDistance;
+        float octree_res=0.001;
+        pcl::octree::OctreePointCloudSearch<pcl::PointXYZ>::Ptr octree(new pcl::octree::OctreePointCloudSearch<pcl::PointXYZ>(octree_res));
+
+        octree->setInputCloud(segmented_pc);
+        octree->addPointsFromInputCloud();
+        if (octree->nearestKSearch (pcl::PointXYZ(centroid[0],centroid[1],centroid[2]), K, pointIdxNKNSearch, pointNKNSquaredDistance) > 0)
+        {
+            scene_surface_centroid=segmented_pc->points[pointIdxNKNSearch[0]];
+            scene_surface_normal=scene_normals->at(clusters[0].indices[pointIdxNKNSearch[0]]);
+        }
+    }
+
+    //Orientation
+    Eigen::Vector4f ee_z_axis(0.0,0.0,1.0,0.0); //Just use camera's z axis. it could be robot's end-effector.
+    Eigen::Vector4f obj_surface_normal(scene_surface_normal.normal_x,scene_surface_normal.normal_y,scene_surface_normal.normal_z,0.0);
+    Eigen::Vector3d rot_axis(ee_z_axis[1]*obj_surface_normal[2]-ee_z_axis[2]*obj_surface_normal[1],
+            ee_z_axis[2]*obj_surface_normal[0]-ee_z_axis[0]*obj_surface_normal[2],
+            ee_z_axis[0]*obj_surface_normal[1]-ee_z_axis[1]*obj_surface_normal[0]);
+    double rot_angle = M_PI-pcl::getAngle3D(ee_z_axis,obj_surface_normal);
+    grasping_pose*=Eigen::AngleAxisd(-rot_angle,rot_axis);
+
+    //Position
+    grasping_pose.translation ()<<scene_surface_centroid.x,scene_surface_centroid.y,scene_surface_centroid.z;
+
+
+}
 
 bool rgbdDetector::orientationCompare(Eigen::Matrix3d& orien1,Eigen::Matrix3d& orien2,double thresh)
 {
