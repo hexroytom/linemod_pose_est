@@ -352,7 +352,7 @@ public:
         {
             //Display all grasping pose
             Eigen::Affine3d grasp_pose;
-            rgbd_detector.graspingPoseBasedOnRegionGrowing (it->scene_pc,grasp_pose);
+            rgbd_detector.graspingPoseBasedOnRegionGrowing (it->scene_pc,0.005,grasp_pose);
 
             tf::Transform grasp_pose_tf_viz;
             tf::poseEigenToTF(grasp_pose,grasp_pose_tf_viz);

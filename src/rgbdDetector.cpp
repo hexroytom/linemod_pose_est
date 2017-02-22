@@ -65,7 +65,7 @@ void rgbdDetector::rcd_voting(vector<double>& Obj_origin_dists,const double& ren
 
 void rgbdDetector::cluster_filter(std::map<std::vector<int>, std::vector<linemod::Match> >& map_match,int thresh)
 {
-    assert(map_match.size() != 0);
+    //assert(map_match.size() != 0);
     std::map<std::vector<int>, std::vector<linemod::Match> >::iterator it= map_match.begin();
     for(;it!=map_match.end();++it)
     {
@@ -232,7 +232,7 @@ void rgbdDetector::nonMaximaSuppression(vector<ClusterData>& cluster_data,const 
     for(;it1!=cluster_data.end();++it1)
     {
         if(!it1->is_checked)
-        {
+        {            
             ClusterData* best_cluster=&(*it1);
             vector<ClusterData>::iterator it2=it1;
             it2++;
@@ -783,12 +783,27 @@ void rgbdDetector::getPositionBySurfaceCentroid(PointCloudXYZ::Ptr scene_pc,Poin
     }
 }
 
-void rgbdDetector::graspingPoseBasedOnRegionGrowing(PointCloudXYZ::Ptr scene_pc,Eigen::Affine3d& grasping_pose)
+void rgbdDetector::graspingPoseBasedOnRegionGrowing(PointCloudXYZ::Ptr scene_pc,double offset,Eigen::Affine3d& grasping_pose)
 {
     //Params
-    float k_neigh_norest=50;
+    float k_neigh_norest=10;
     float k_neigh_reg=30;
     grasping_pose=Eigen::Affine3d::Identity ();
+
+    //Denoise
+    statisticalOutlierRemoval(scene_pc,50,1.0);
+
+    //Smooth
+    pcl::search::KdTree<pcl::PointXYZ>::Ptr tree_(new pcl::search::KdTree<pcl::PointXYZ>);
+    PointCloudXYZ::Ptr tmp_pc(new PointCloudXYZ);
+    pcl::MovingLeastSquares<pcl::PointXYZ,pcl::PointXYZ> mls;
+    mls.setInputCloud(scene_pc);
+    mls.setComputeNormals(false);
+    mls.setPolynomialFit(true);
+    mls.setSearchMethod(tree_);
+    mls.setSearchRadius(0.01);
+    mls.process(*tmp_pc);
+    pcl::copyPointCloud(*tmp_pc,*scene_pc);
 
     //Normal estimation
     pcl::NormalEstimationOMP<pcl::PointXYZ, pcl::Normal> norm_est;
@@ -812,8 +827,8 @@ void rgbdDetector::graspingPoseBasedOnRegionGrowing(PointCloudXYZ::Ptr scene_pc,
      * If the deviation between points normals is less than smoothness threshold then they are suggested to be in the same cluster (new point - the tested one - will be added to the cluster).
      * The second one is responsible for curvature threshold.
      * If two points have a small normals deviation then the disparity between their curvatures is tested. And if this value is less than curvature threshold then the algorithm will continue the growth of the cluster using new added point.*/
-    reg.setSmoothnessThreshold (10.0 / 180.0 * M_PI);
-    reg.setCurvatureThreshold (1);
+    reg.setSmoothnessThreshold (5.0 / 180.0 * M_PI);
+    reg.setCurvatureThreshold (1.0);
     std::vector <pcl::PointIndices> clusters;
     reg.extract (clusters);
     std::sort(clusters.begin(),clusters.end(),sortRegionIndx);
@@ -855,6 +870,11 @@ void rgbdDetector::graspingPoseBasedOnRegionGrowing(PointCloudXYZ::Ptr scene_pc,
 
     //Position
     grasping_pose.translation ()<<scene_surface_centroid.x,scene_surface_centroid.y,scene_surface_centroid.z;
+
+    //Offset
+    grasping_pose.translation()[0]-=offset*obj_surface_normal[0];
+    grasping_pose.translation()[1]-=offset*obj_surface_normal[1];
+    grasping_pose.translation()[2]-=offset*obj_surface_normal[2];
 
 
 }

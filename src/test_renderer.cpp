@@ -155,19 +155,19 @@ int main(int argc,char** argv)
         {
         renderer_n_points_ = 150;
         renderer_angle_step_ = 10;
-        renderer_radius_min_ = 0.5;
-        renderer_radius_max_ = 0.8;
+        renderer_radius_min_ = 0.7;
+        renderer_radius_max_ = 1.0;
         renderer_radius_step_ = 0.1;
-        renderer_width_ = 752; //ensenso 752
+        renderer_width_ = 640; //ensenso 752
         renderer_height_ = 480;
         renderer_near_ = 0.1;
         renderer_far_ = 1000.0;
-        renderer_focal_length_x_ = 826.1193;//Kinect ;//carmine 535.566011; //dataset 571.9737
-        renderer_focal_length_y_ = 826.1193;//Kinect //carmine 537.168115;  //dataset 571.0073
-        stl_file="/home/yake/catkin_ws/src/linemod_pose_est/config/stl/t_pipe_connector.stl";
-        template_output_path="/home/yake/catkin_ws/src/linemod_pose_est/config/data/t_pipe_linemod_ensenso_templates.yml";
-        renderer_params_output_path="/home/yake/catkin_ws/src/linemod_pose_est/config/data/t_pipe_linemod_ensenso_renderer_params.yml";
-        renderer_depth_output_path="/home/yake/catkin_ws/src/linemod_pose_est/config/data/t_pipe_linemod_ensenso_renderer_depth.yml";
+        renderer_focal_length_x_ = 571.9737;//Kinect ;//carmine 535.566011; //dataset 571.9737
+        renderer_focal_length_y_ = 571.9737;//Kinect //carmine 537.168115;  //dataset 571.0073
+        stl_file="/home/yake/catkin_ws/src/linemod_pose_est/config/stl/coffee_cup_plain.stl";
+        template_output_path="/home/yake/catkin_ws/src/linemod_pose_est/config/data/coffee_linemod_dataset_templates.yml";
+        renderer_params_output_path="/home/yake/catkin_ws/src/linemod_pose_est/config/data/coffee_linemod_dataset_renderer_params.yml";
+
     }else{
      renderer_n_points_ = 150;
      renderer_angle_step_ = 10;

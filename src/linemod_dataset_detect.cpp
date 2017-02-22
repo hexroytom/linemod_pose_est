@@ -49,6 +49,8 @@
 #include <pcl/segmentation/extract_clusters.h>
 #include <pcl/filters/statistical_outlier_removal.h>
 #include <pcl/octree/octree.h>
+#include <pcl/kdtree/kdtree_flann.h>
+#include <pcl/io/ply_io.h>
 
 //ensenso
 #include <ensenso/RegistImage.h>
@@ -145,6 +147,11 @@ string getGRfileSerial(string img_path)
     return num_str;
 }
 
+bool sortClusterBasedOnScore(const ClusterData& cluster1,const ClusterData& cluster2)
+{
+    return(cluster1.score>cluster2.score);
+}
+
 class linemod_detect
 {
     ros::NodeHandle nh;
@@ -224,6 +231,13 @@ public:
     //rgbd detector test
     rgbdDetector rgbd_detector;
 
+    //model point cloud
+    PointCloudXYZ::Ptr model_pc;
+
+    //final results
+    vector<ClusterData> cluster_data;
+    double nms_radius;
+
 
 public:
         linemod_detect(std::string template_file_name,std::string renderer_params_name,std::string mesh_path,float detect_score_threshold,int icp_max_iter,float icp_tr_epsilon,float icp_fitness_threshold, float icp_maxCorresDist, uchar clustering_step,float orientation_clustering_th):
@@ -237,7 +251,8 @@ public:
             icp_dist_min_(0.06f),
             clustering_step_(clustering_step),
             bias_x(0),
-            image_width(rgbdDetector::CARMINE)
+            image_width(rgbdDetector::CARMINE),
+            model_pc(new PointCloudXYZ)
         {
             //Publisher
             //pub_color_=it.advertise ("/sync_rgb",2);
@@ -308,6 +323,7 @@ public:
 
         void detect_cb(const Mat& rgb_img,const Mat& depth_img)
         {
+            cluster_data.clear();
             //This program aims for detect objects using dataset of paper "Latent-Class Forests for 3D Object Detection and Pose Estimation"
             if(detector->classIds ().empty ())
             {
@@ -401,7 +417,7 @@ public:
 
             //Compute criteria for each cluster
                 //Output: Vecotor of ClusterData, each element of which contains index, score, flag of checking.
-            vector<ClusterData> cluster_data;
+
             t=cv::getTickCount ();
             //cluster_scoring(map_match,mat_depth,cluster_data);
             rgbd_detector.cluster_scoring(map_match,mat_depth,cluster_data);
@@ -411,21 +427,22 @@ public:
             //Non-maxima suppression
             t=cv::getTickCount ();
             //nonMaximaSuppression(cluster_data,5,map_match);
-            rgbd_detector.nonMaximaSuppression(cluster_data,5,Rects_,map_match);
+            //rgbd_detector.nonMaximaSuppression(cluster_data,5,Rects_,map_match);
+            nonMaximaSuppression(cluster_data,nms_radius,Rects_,map_match);
             t=(cv::getTickCount ()-t)/cv::getTickFrequency ();
             cout<<"Time consumed by non-maxima suppression: "<<t<<endl;
 
             //Display
-//            for(vector<ClusterData>::iterator iter=cluster_data.begin();iter!=cluster_data.end();++iter)
-//            {
-//                for(std::vector<linemod::Match>::iterator it= iter->matches.begin();it != iter->matches.end();it++)
-//                {
-//                    std::vector<cv::linemod::Template> templates=detector->getTemplates(it->class_id, it->template_id);
-//                    drawResponse(templates, 1, mat_rgb,cv::Point(it->x,it->y), 2);
-//                }
-//            }
-//            imshow("Non-maxima suppression",mat_rgb);
-//            waitKey(0);
+            for(vector<ClusterData>::iterator iter=cluster_data.begin();iter!=cluster_data.end();++iter)
+            {
+                for(std::vector<linemod::Match>::iterator it= iter->matches.begin();it != iter->matches.end();it++)
+                {
+                    std::vector<cv::linemod::Template> templates=detector->getTemplates(it->class_id, it->template_id);
+                    drawResponse(templates, 1, mat_rgb,cv::Point(it->x,it->y), 2);
+                }
+            }
+            imshow("Non-maxima suppression",mat_rgb);
+            waitKey(0);
 
             //Pose average
             t=cv::getTickCount ();
@@ -446,12 +463,10 @@ public:
             //Hypothesis verification
             t=cv::getTickCount ();
             //hypothesisVerification(cluster_data,0.002,0.15);
-            rgbd_detector.hypothesisVerification(cluster_data,0.002,0.17);
+            rgbd_detector.hypothesisVerification(cluster_data,0.004,0.40);
             t=(cv::getTickCount ()-t)/cv::getTickFrequency ();
             cout<<"Time consumed by hypothesis verification: "<<t<<endl;
 
-            //Result analysis
-            poseComparision(cluster_data);
 
             //Output the number of the image
             cout<<"Serial Number: "<<serial_number<<endl;
@@ -468,6 +483,118 @@ public:
             //vizResultPclViewer(cluster_data,pc_ptr);
 
         }
+
+        void nonMaximaSuppression(vector<ClusterData>& cluster_data,const double& neighborSize, vector<Rect>& Rects_,std::map<std::vector<int>, std::vector<linemod::Match> >& map_match)
+        {
+            vector<ClusterData> nms_cluster_data;
+            std::map<std::vector<int>, std::vector<linemod::Match> > nms_map_match;
+            vector<ClusterData>::iterator it1=cluster_data.begin();
+            double radius=neighborSize;
+
+            pcl::PointCloud<pcl::PointXYZ> cluster_pc;
+            for(;it1!=cluster_data.end();++it1)
+            {
+                pcl::PointXYZ point;
+                point.x=it1->index[0];
+                point.y=it1->index[1];
+                point.z=0.0;
+                cluster_pc.points.push_back(point);
+            }
+            //Create kd tree
+//            pcl::KdTreeFLANN<pcl::PointXYZ>::Ptr tree(new pcl::KdTreeFLANN<pcl::PointXYZ>);
+//            tree->setInputCloud(cluster_pc.makeShared());
+            //Initiate an octree for nearest neighbour searching
+            pcl::octree::OctreePointCloudSearch<pcl::PointXYZ> tree (1);
+            tree.setInputCloud(cluster_pc.makeShared());
+            tree.addPointsFromInputCloud();
+
+            //Search NN
+            vector<pcl::PointXYZ,Eigen::aligned_allocator<pcl::PointXYZ> >::iterator it_pc =cluster_pc.points.begin();
+            for(int i=0;it_pc != cluster_pc.points.end();++it_pc,++i)
+            {
+                //check if the cluster has been checked
+                if(!cluster_data[i].is_checked)
+                {
+                    std::vector<int> pointIdxVec;
+                    std::vector<float> squaredDistance;
+                    pcl::PointXYZ search_point = *it_pc;
+                    tree.radiusSearch(search_point,radius,pointIdxVec,squaredDistance);
+
+                    //Extract neighbors using indices
+                    vector<ClusterData> tmp_cluster;
+                    for(std::vector<int>::iterator it_idx = pointIdxVec.begin();it_idx!=pointIdxVec.end();++it_idx)
+                    {
+                        if(!cluster_data[*it_idx].is_checked)
+                        {
+                            tmp_cluster.push_back(cluster_data[*it_idx]);
+                        }
+
+                        int p =0;
+                    }
+
+                    //Find out the one with maximum score
+                    std::sort(tmp_cluster.begin(),tmp_cluster.end(),sortClusterBasedOnScore);
+
+                    //Save the local maximum
+                    nms_cluster_data.push_back(tmp_cluster[0]);
+                    cout<<"Index 1: "<<tmp_cluster[0].index[0]<<"  Index 2: "<<tmp_cluster[0].index[1]<<endl;
+
+
+                    //Mark all of the NN as checked
+                    for(std::vector<int>::iterator it_idx = pointIdxVec.begin();it_idx!=pointIdxVec.end();++it_idx)
+                    {
+                        cluster_data[*it_idx].is_checked=true;
+                        int x = cluster_data[*it_idx].index[0];
+                        int y = cluster_data[*it_idx].index[1];
+                        int x_pc = cluster_pc[*it_idx].x;
+                        int y_pc = cluster_pc[*it_idx].y;
+                        int p=0;
+                    }
+                }
+
+            }
+
+            cluster_data.clear();
+            cluster_data=nms_cluster_data;
+
+            //Add matches to cluster data
+            it1=cluster_data.begin();
+            for(;it1!=cluster_data.end();++it1)
+            {
+                std::map<std::vector<int>, std::vector<linemod::Match> >::iterator it2;
+                it2=map_match.find(it1->index);
+                nms_map_match.insert(*it2);
+                it1->matches=it2->second;
+            }
+
+            //Compute bounding box for each cluster
+            it1=cluster_data.begin();
+            for(;it1!=cluster_data.end();++it1)
+            {
+                int X=0; int Y=0; int WIDTH=0; int HEIGHT=0;
+                std::vector<linemod::Match>::iterator it2=it1->matches.begin();
+                for(;it2!=it1->matches.end();++it2)
+                {
+                    Rect tmp=Rects_[it2->template_id];
+                    X+=it2->x;
+                    Y+=it2->y;
+                    WIDTH+=tmp.width;
+                    HEIGHT+=tmp.height;
+                }
+                X/=it1->matches.size();
+                Y/=it1->matches.size();
+                WIDTH/=it1->matches.size();
+                HEIGHT/=it1->matches.size();
+
+                it1->rect=Rect(X,Y,WIDTH,HEIGHT);
+
+            }
+
+            map_match.clear();
+            map_match=nms_map_match;
+            int p=0;
+        }
+
 
         static cv::Ptr<cv::linemod::Detector> readLinemod(const std::string& filename)
         {
@@ -773,6 +900,169 @@ public:
             }
         }
 
+        void posePRAnalysis(double coeff, double model_diameter,int& TP,int& FP,int& FN,double& precision, double& recall)
+        {
+            //Save ground truth to an eigen vector
+            string gr_file_path=gr_prefix + "poses" + gr_file_serial + ".txt";
+            vector<Eigen::Affine3d> gr_poses;
+            openGroundTruthFile(gr_file_path,gr_poses);
+
+            //Save position of ground truth to a kd tree for indexing
+            pcl::KdTreeFLANN<pcl::PointXYZ>::Ptr position_tree(new pcl::KdTreeFLANN<pcl::PointXYZ>);
+            saveToKdTree(gr_poses,position_tree);
+
+            //For each estimated pose, assign the gr_poses: pair(estimated pose, ground truth)
+            vector<pair<Eigen::Affine3d,Eigen::Affine3d> > pose_set;
+            assignGRPose(cluster_data, gr_poses, position_tree, -0.000329264,0.000714317,0.0119547, pose_set);
+
+            //trasnform model point cloud using estimated pose and ground truth pose
+            vector<pair<PointCloudXYZ::Ptr,PointCloudXYZ::Ptr> > pc_set;
+            for(int i=0;i<pose_set.size();++i)
+            {
+                PointCloudXYZ::Ptr est_pc(new PointCloudXYZ);
+                PointCloudXYZ::Ptr gr_pc(new PointCloudXYZ);
+                pcl::transformPointCloud(*model_pc, *est_pc, pose_set[i].first);
+                pcl::transformPointCloud(*model_pc, *gr_pc, pose_set[i].second);
+
+                pc_set.push_back(pair<PointCloudXYZ::Ptr,PointCloudXYZ::Ptr>(est_pc,gr_pc));
+            }
+
+            bool is_symmetry = true;
+
+            if(is_symmetry)
+            {
+                //For each hypothese
+                for(int i=0;i<pc_set.size();++i)
+                {
+                    //save ground truth point cloud to kd tree
+                    pcl::KdTreeFLANN<pcl::PointXYZ>::Ptr pc_tree(new pcl::KdTreeFLANN<pcl::PointXYZ>);
+                    pc_tree->setInputCloud(pc_set[i].second);
+
+                    //search nearest neighbor in estimated point cloud using kd tree
+                    double avg_distance = 0.0;
+                    for(vector<pcl::PointXYZ,Eigen::aligned_allocator<pcl::PointXYZ> >::iterator it = (pc_set[i].first)->points.begin(); it!= (pc_set[i].first)->points.end();++it)
+                    {
+                        pcl::PointXYZ est_point = *it;
+                        std::vector<int> pointIdxVec;
+                        std::vector<float> squaredDistance;
+                        int k=1;
+                        pc_tree->nearestKSearch(est_point,k,pointIdxVec,squaredDistance);
+                        pcl::PointXYZ gr_point = pc_set[i].second->points[pointIdxVec[0]];
+
+                        double tmp_distance = sqrt((est_point.x - gr_point.x)*(est_point.x - gr_point.x)
+                                                   + (est_point.y - gr_point.y)*(est_point.y - gr_point.y)
+                                                   +(est_point.z - gr_point.z)*(est_point.z - gr_point.z));
+
+                        avg_distance += tmp_distance;
+                    }
+                    avg_distance /= pc_set[i].first->points.size();
+
+                    //Evaluate the distance (TP? FP? FN?)
+                    if(avg_distance < coeff*model_diameter)
+                    {
+                        TP++;
+                    }
+                    else
+                    {
+                        FP++;
+                    }
+                }
+
+                //Normally tp would not be greater than 3
+                if(TP>3)
+                {
+                    FN=0;
+                }
+                else
+                {
+                    FN=3-TP;
+                }
+
+            }
+            else // non-symmetry object
+            {
+                //For each hypothese
+                for(int i=0;i<pc_set.size();++i)
+                {
+                    vector<pcl::PointXYZ,Eigen::aligned_allocator<pcl::PointXYZ> >::iterator it_est = (pc_set[i].first)->points.begin();
+                    vector<pcl::PointXYZ,Eigen::aligned_allocator<pcl::PointXYZ> >::iterator it_gr = (pc_set[i].second)->points.begin();
+                    double avg_distance = 0.0;
+                    for(; it_est!= (pc_set[i].first)->points.end();++it_est,++it_gr)
+                    {
+                        pcl::PointXYZ est_point = *it_est;
+                        pcl::PointXYZ gr_point = *it_gr;
+
+                        double tmp_distance = sqrt((est_point.x - gr_point.x)*(est_point.x - gr_point.x)
+                                                   + (est_point.y - gr_point.y)*(est_point.y - gr_point.y)
+                                                   +(est_point.z - gr_point.z)*(est_point.z - gr_point.z));
+
+                        avg_distance += tmp_distance;
+                    }
+                    avg_distance /= pc_set[i].first->points.size();
+
+                    //Evaluate the distance (TP? FP? FN?)
+                    if(avg_distance < coeff*model_diameter)
+                    {
+                        TP++;
+                    }
+                    else
+                    {
+                        FP++;
+                    }
+                }
+
+
+                //Normally tp would not be greater than 3
+                if(TP>3)
+                {
+                    FN=0;
+                }
+                else
+                {
+                    FN=3-TP;
+                }
+            }
+
+            //Comptute Precision and Recall
+            precision=(double)TP/(double)(TP+FP);
+            recall=(double)TP/(double)(TP+FN);
+
+        }
+
+        void assignGRPose(const vector<ClusterData>& cluster_data,const vector<Eigen::Affine3d>& gr_poses,pcl::KdTreeFLANN<pcl::PointXYZ>::Ptr tree,double x_refinement,double y_refinement, double z_refinement,vector<pair<Eigen::Affine3d,Eigen::Affine3d> >& pose_set)
+        {
+            for(vector<ClusterData>::const_iterator it = cluster_data.begin();it!=cluster_data.end();++it)
+            {
+                Eigen::Affine3d transform=Eigen::Affine3d::Identity();
+                //In my setting, object coordinate is fixed to the center of bounding box, but in the setting of the dataset, the coordinates is fixed a certained point.
+                    //So i need to transform the origin coordinate to coincide with the one from dataset.
+                transform.translation()<<x_refinement,y_refinement,z_refinement;
+                Eigen::Affine3d refined_pose=it->pose*transform;
+
+                //kd tree search nearest neighbor
+                pcl::PointXYZ position(refined_pose.translation()[0],refined_pose.translation()[1],refined_pose.translation()[2]);
+                //pcl::PointXYZ position(it->pose.translation()[0],it->pose.translation()[1],it->pose.translation()[2]);
+                std::vector<int> pointIdxVec;
+                std::vector<float> squaredDistance;
+                int k=1;
+                tree->nearestKSearch(position,k,pointIdxVec,squaredDistance);
+                Eigen::Affine3d gr_pose = gr_poses[pointIdxVec[0]];
+                int p=0;
+                pose_set.push_back(pair<Eigen::Affine3d,Eigen::Affine3d>(refined_pose,gr_pose));
+            }
+        }
+
+        void saveToKdTree(vector<Eigen::Affine3d>& gr_poses, pcl::KdTreeFLANN<pcl::PointXYZ>::Ptr tree)
+        {
+            PointCloudXYZ::Ptr pc(new PointCloudXYZ);
+
+            for(int i=0;i<gr_poses.size();++i)
+            {
+                pcl::PointXYZ tmp_pc(gr_poses[i].translation()[0],gr_poses[i].translation()[1],gr_poses[i].translation()[2]);
+                pc->points.push_back(tmp_pc);
+            }
+            tree->setInputCloud(pc);
+        }
 
         bool openGroundTruthFile(string gr_file_path, PointCloudXYZ& position)
         {
@@ -828,6 +1118,76 @@ public:
             return true;
         }
 
+        bool openGroundTruthFile(string gr_file_path, vector<Eigen::Affine3d>& gr_poses)
+        {
+            //Initiate position of ground truth
+            gr_poses.clear();
+
+            ifstream file;
+            file.open(gr_file_path.data());
+            if(!file.is_open())
+                return false;
+
+            string str;
+            int num_line=0;
+            while(getline(file,str))
+            {
+                num_line++;
+                if(num_line == 1 || num_line == 5 || num_line == 9)
+                {
+                    Eigen::Affine3d tmp_pose = Eigen::Affine3d::Identity();
+                    for(int i=0;i<3;++i)
+                    {
+                        getline(file,str);
+                        num_line++;
+                        string::iterator it=str.begin();
+                        string::iterator it_end;
+                        for(int j=0;j<4;++j)
+                        {
+                            while(*it == ' ')
+                                it++;
+
+                            it_end = it;
+
+                            if(j != 3)
+                            {
+                                while(*it_end != ' ')
+                                    it_end++;
+
+                            }
+                            else
+                            {
+                                it_end=str.end();
+                            }
+                            string tmp_str =string(it,it_end);
+                            tmp_pose.matrix()(i,j) = atof(tmp_str.data());
+                            it=it_end;
+                        }
+                    }
+                    gr_poses.push_back(tmp_pose);
+
+                }
+
+            }
+
+            return true;
+        }
+
+        void loadModelPC(string path)
+        {
+            pcl::io::loadPLYFile(path,*model_pc);
+        }
+
+        void setTemplateMatchingThreshold(float threshold_)
+        {
+            threshold = threshold_;
+        }
+
+        void setNonMaximumSuppressionRadisu(double radius)\
+        {
+            nms_radius=radius;
+        }
+
 };
 
 int main(int argc,char** argv)
@@ -843,6 +1203,7 @@ int main(int argc,char** argv)
     float icp_maxCorresDist;
     uchar clustering_step;
     float orientation_clustering_step;
+    double nms_radius;
 
     linemod_template_path=argv[1];
     renderer_param_path=argv[2];
@@ -854,6 +1215,7 @@ int main(int argc,char** argv)
     icp_maxCorresDist=atof(argv[8]);
     clustering_step=atoi(argv[9]);
     orientation_clustering_step=atof(argv[10]);
+    nms_radius=atof(argv[11]);
 
     linemod_detect detector(linemod_template_path,renderer_param_path,model_stl_path,
                             detect_score_th,icp_max_iter,icp_tr_epsilon,icp_fitness_th,icp_maxCorresDist,clustering_step,orientation_clustering_step);
@@ -863,22 +1225,44 @@ int main(int argc,char** argv)
     ros::Rate loop(1);
 
     //Read rgb and depth image
-    serial_number=argv[11];
+    serial_number=argv[12];
     string img_path= "/home/yake/catkin_ws/src/linemod_pose_est/dataset/RGB/img_" + serial_number + ".png";
     string depth_path= "/home/yake/catkin_ws/src/linemod_pose_est/dataset/Depth/img_" + serial_number + ".png";
+    string model_path = "/home/yake/catkin_ws/src/linemod_pose_est/dataset/PLY/coffee_cup_plain.ply";
 
     //Extract file number for later use
     gr_file_serial=getGRfileSerial(img_path);
 
+    //GR file loading test
+    //detector.posePRAnalysis();
+
+    //Load model pc
+    detector.loadModelPC(model_path);
+
     Mat rgb_img=imread(img_path,IMREAD_COLOR);
     Mat depth_img=imread(depth_path,IMREAD_UNCHANGED);
 
-    while(ros::ok())
+    static const int arr[] = {80};
+    vector<int> thresh_set (arr, arr + sizeof(arr) / sizeof(arr[0]) );
+
+
+    for(int i=0;i<thresh_set.size();++i)
     {
+        //detector.setTemplateMatchingThreshold(thresh_set[i]);
+        detector.setNonMaximumSuppressionRadisu(nms_radius);
         detector.detect_cb(rgb_img,depth_img);
-        loop.sleep();
+        //Get precision and recall
+        //Result analysis
+        int TP=0; int FP=0; int FN=0;
+        double precision, recall;
+        detector.posePRAnalysis(0.15,0.1745044074,TP,FP,FN,precision,recall);
+        cout<<"TP: "<<TP<<"  FP: "<<FP<<"  FN: "<<FN<<endl;
+        cout<<"Precision: "<<precision<<"  Recall: " <<recall<<endl;
+        cout<<"==================================================="<<endl;
+        int p=0;
     }
 
 
-    ros::spin ();
+
+    ros::shutdown();
 }

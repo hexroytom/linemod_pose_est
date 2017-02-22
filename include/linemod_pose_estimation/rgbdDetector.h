@@ -52,6 +52,7 @@
 #include <pcl/features/shot_omp.h>
 #include <pcl/recognition/cg/hough_3d.h>
 #include <pcl/features/board.h>
+#include <pcl/surface/mls.h>
 
 
 //ork
@@ -185,7 +186,7 @@ public:
 
     void getPoseByLocalDescriptor(PointCloudXYZ::Ptr scene_pc, PointCloudXYZ::Ptr model_pc, double DistanceFromCamToObj,Eigen::Affine3d& pose, Eigen::Vector3d &position);
 
-    void graspingPoseBasedOnRegionGrowing(PointCloudXYZ::Ptr scene_pc, Eigen::Affine3d& grasping_pose);
+    void graspingPoseBasedOnRegionGrowing(PointCloudXYZ::Ptr scene_pc, double offset, Eigen::Affine3d& grasping_pose);
 
     //Utilities
     cv::Ptr<cv::linemod::Detector> readLinemod(const std::string& filename);
