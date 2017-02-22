@@ -1,0 +1,22 @@
+<launch>
+  <!--launch a node for publishing TF from depth camera frame to rgb camera frame -->
+  <arg name="rgbTdep_x" default="-54.23" />
+  <arg name="rgbTdep_y" default="43.00" />
+  <arg name="rgbTdep_z" default="-25.59" />
+  <arg name="rgbTdep_roll" default="-0.25" />
+  <arg name="rgbTdep_pitch" default="-0.32" />
+  <arg name="rgbTdep_yaw" default="1.31" />
+  <arg name="period_in_ms" default="25" />
+
+  <node name="depth_camera_to_rgb_camera_broadcaster" pkg="linemod_pose_estimation" type="depth_camera_to_rgb_camera_broadcaster" output="screen" respawn="false" args="$(arg rgbTdep_x) $(arg rgbTdep_y) $(arg rgbTdep_z) $(arg rgbTdep_roll) $(arg rgbTdep_pitch) $(arg rgbTdep_yaw) $(arg period_in_ms)" />
+
+  <arg name="tool0Tdep_x" default="0.0487324" />
+  <arg name="tool0Tdep_y" default="-0.0513127" />
+  <arg name="tool0Tdep_z" default="0.0444524" />
+  <arg name="tool0Tdep_qw" default="0.727184" />
+  <arg name="tool0Tdep_qx" default="0.0136583" />
+  <arg name="tool0Tdep_qy" default="0.012435" />
+  <arg name="tool0Tdep_qz" default="0.686194" />
+
+  <node pkg="tf" type="static_transform_publisher" name="tool0Tdep_broadcaster" args="$(arg tool0Tdep_x) $(arg tool0Tdep_y) $(arg tool0Tdep_z) $(arg tool0Tdep_qx) $(arg tool0Tdep_qy) $(arg tool0Tdep_qz) $(arg tool0Tdep_qw) tool0 camera_link $(arg period_in_ms)" />
+</launch>
