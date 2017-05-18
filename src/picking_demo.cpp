@@ -105,6 +105,9 @@ public:
     //UR script publisher
     ros::Publisher ur_script_pub;
 
+    //Non maximum suppression neighbor
+    double nms_radius;
+
 
 public:
     linemod_detect(std::string template_file_name,std::string renderer_params_name,std::string mesh_path,float detect_score_threshold,int icp_max_iter,float icp_tr_epsilon,float icp_fitness_threshold, float icp_maxCorresDist, uchar clustering_step,float orientation_clustering_th):
@@ -114,7 +117,8 @@ public:
         icp_dist_min_(0.06f),
         bias_x(56),
         image_width(rgbdDetector::ENSENSO),
-        clustering_step_(clustering_step)
+        clustering_step_(clustering_step),
+        nms_radius(4)
     {
         //Publisher
         pc_rgb_pub_= nh.advertise<sensor_msgs::PointCloud2>("ensenso_rgb_pc",1);
@@ -209,11 +213,6 @@ public:
         pcl::PointCloud<pcl::PointXYZ>::Ptr pc_ptr (new pcl::PointCloud<pcl::PointXYZ>);
         pcl::PointCloud<pcl::PointXYZ>::Ptr pc_median_ptr (new pcl::PointCloud<pcl::PointXYZ>);
         pcl::fromROSMsg(pc,*pc_ptr);
-        //Option: Median filter for PC smoothing
-        //            pcl::MedianFilter<pcl::PointXYZ> median_filter;
-        //            median_filter.setWindowSize(11);
-        //            median_filter.setInputCloud(pc_ptr);
-        //            median_filter.applyFilter(*pc_median_ptr);
 
         if(detector->classIds ().empty ())
         {
@@ -229,6 +228,8 @@ public:
         cv::Rect crop(bias_x,0,640,480);
         Mat mat_rgb_crop=mat_rgb(crop);
         Mat display=mat_rgb_crop;   //image for displaying results
+        Mat before_nms=mat_rgb_crop.clone();
+        Mat after_nms=mat_rgb_crop.clone();
         Mat mat_depth_crop=mat_depth(crop);
 
         //Perform the detection
@@ -242,17 +243,17 @@ public:
         t=(cv::getTickCount ()-t)/cv::getTickFrequency ();
 
         //Display all the results
-        //            for(std::vector<linemod::Match>::iterator it= matches.begin();it != matches.end();it++){
-        //                std::vector<cv::linemod::Template> templates=detector->getTemplates(it->class_id, it->template_id);
-        //                drawResponse(templates, 1, display,cv::Point(it->x,it->y), 2);
-        //            }
+//        for(std::vector<linemod::Match>::iterator it= matches.begin();it != matches.end();it++){
+//            std::vector<cv::linemod::Template> templates=detector->getTemplates(it->class_id, it->template_id);
+//            drawResponse(templates, 1, display,cv::Point(it->x,it->y), 2);
+//        }
 
         //Clustering based on Row Col Depth
         std::map<std::vector<int>, std::vector<linemod::Match> > map_match;
         rgbd_detector.rcd_voting(Obj_origin_dists,renderer_radius_min,clustering_step_,renderer_radius_step,matches,map_match);
 
         //Filter based on size of clusters
-        uchar thresh=4;
+        uchar thresh=2;
         rgbd_detector.cluster_filter(map_match,thresh);
 
         //Compute criteria for each cluster
@@ -262,10 +263,29 @@ public:
         t=(cv::getTickCount ()-t)/cv::getTickFrequency ();
         cout<<"Time consumed by scroing: "<<t<<endl;
 
-        //Non-maxima suppression
-        rgbd_detector.nonMaximaSuppression(cluster_data,10,Rects_,map_match);
+        for(std::map<std::vector<int>, std::vector<linemod::Match> >::iterator it= map_match.begin();it != map_match.end();it++)
+        {
+            for(std::vector<linemod::Match>::iterator it2=it->second.begin();it2!=it->second.end();++it2)
+            {
+                std::vector<cv::linemod::Template> templates=detector->getTemplates(it2->class_id, it2->template_id);
+                drawResponse(templates, 1, before_nms,cv::Point(it2->x,it2->y), 2);
+            }
+        }
+        imshow("before nms",before_nms);
+        waitKey(1);
 
-        //Pose refine for all candidates
+        //Non-maxima suppression
+        rgbd_detector.nonMaximaSuppression(cluster_data,nms_radius,Rects_,map_match);
+
+        //Display all the bounding box
+        for(int ii=0;ii<cluster_data.size();++ii)
+        {
+            rectangle(after_nms,cluster_data[ii].rect,Scalar(0,0,255),2);
+        }
+        imshow("after nms",after_nms);
+        waitKey(1);
+
+        //Pose refine for one candidates
         vector<ClusterData> tmp;
         for(int k=0;k<cluster_data.size();++k)
         {
@@ -285,7 +305,7 @@ public:
             cout<<"Time consumed by pose refinement: "<<t<<endl;
 
             //Hypothesis verification
-            rgbd_detector.hypothesisVerification(tmp,0.002,0.10);
+            rgbd_detector.hypothesisVerification(tmp,0.004,0.30,false);
 
             if(tmp.size() == 1)
             {
@@ -295,21 +315,20 @@ public:
         cluster_data.clear();
         cluster_data=tmp;
 
-        //Pose refine for all candidates
+//        //Pose average
+//        t=cv::getTickCount ();
+//        rgbd_detector.getRoughPoseByClustering(cluster_data,pc_ptr,Rs_,Ts_,Distances_,Obj_origin_dists,orientation_clustering_th_,renderer_iterator_,renderer_focal_length_x,renderer_focal_length_y,image_width,bias_x);
+//        t=(cv::getTickCount ()-t)/cv::getTickFrequency ();
+//        cout<<"Time consumed by pose clustering: "<<t<<endl;
+
+//        //Pose refine for all candidates
 //        t=cv::getTickCount ();
 //        rgbd_detector.icpPoseRefine(cluster_data,icp,pc_ptr,image_width,bias_x,false);
 //        t=(cv::getTickCount ()-t)/cv::getTickFrequency ();
 //        cout<<"Time consumed by pose refinement: "<<t<<endl;
 
-
-//        if(cluster_data.size() == 0)
-//            {
-
-//        }
-//        else
-//            {
-//            tmp.push_back(cluster_data[0]);
-//        }
+//        //Hypothesis verification
+//        rgbd_detector.hypothesisVerification(cluster_data,0.002,0.10,false);
 
         //Display all the bounding box
         for(int ii=0;ii<cluster_data.size();++ii)
@@ -821,8 +840,8 @@ public:
         ros::AsyncSpinner spinner(1);
         spinner.start();
 
-        group->setMaxVelocityScalingFactor(0.9);
-        group->setMaxAccelerationScalingFactor(0.9);
+        group->setMaxVelocityScalingFactor(0.8);
+        group->setMaxAccelerationScalingFactor(0.8);
         group->setPoseTarget(goalPose);
         moveit::planning_interface::MoveGroup::Plan planner;
         bool is_success=group->plan(planner);
@@ -880,8 +899,8 @@ public:
         ros::AsyncSpinner spinner(1);
         spinner.start();
 
-        group->setMaxVelocityScalingFactor(0.5);
-        group->setMaxAccelerationScalingFactor(0.5);
+        group->setMaxVelocityScalingFactor(0.6);
+        group->setMaxAccelerationScalingFactor(0.6);
 
         moveit::planning_interface::MoveGroup::Plan planner;
         planner.trajectory_=robot_traj;
@@ -945,12 +964,12 @@ public:
 
         //group->setNamedTarget("place_target");
         vector<double> joint_angles(6);
-        joint_angles[0]=13.16/180.0*M_PI;
-        joint_angles[1]=-83.80/180.0*M_PI;
-        joint_angles[2]=-97.89/180.0*M_PI;
-        joint_angles[3]=-77.18/180.0*M_PI;
-        joint_angles[4]=82.11/180.0*M_PI;
-        joint_angles[5]=-34.23/180.0*M_PI;
+        joint_angles[0]=-16.34/180.0*M_PI;
+       joint_angles[1]=-93.10/180.0*M_PI;
+        joint_angles[2]=-63.82/180.0*M_PI;
+        joint_angles[3]=-115.20/180.0*M_PI;
+        joint_angles[4]=85.06/180.0*M_PI;
+        joint_angles[5]=-57.22/180.0*M_PI;
         group->setJointValueTarget(joint_angles);        
         is_success=group->plan(planner);
         if(is_success)
@@ -1010,6 +1029,11 @@ public:
 
     }
 
+    void setNonMaximumSuppressionRadisu(double radius)\
+    {
+        nms_radius=radius;
+    }
+
 };
 
 int main(int argc,char** argv)
@@ -1027,6 +1051,7 @@ int main(int argc,char** argv)
     float icp_maxCorresDist;
     uchar clustering_step;
     float orientation_clustering_step;
+    double nms_neighbor_size;
 
     linemod_template_path=argv[1];
     renderer_param_path=argv[2];
@@ -1038,6 +1063,7 @@ int main(int argc,char** argv)
     icp_maxCorresDist=atof(argv[8]);
     clustering_step=atoi(argv[9]);
     orientation_clustering_step=atof(argv[10]);
+    nms_neighbor_size=atof(argv[11]);
 
     linemod_detect detector(linemod_template_path,renderer_param_path,model_stl_path,
                             detect_score_th,icp_max_iter,icp_tr_epsilon,icp_fitness_th,icp_maxCorresDist,clustering_step,orientation_clustering_step);
@@ -1045,8 +1071,8 @@ int main(int argc,char** argv)
     ensenso::RegistImage srv;
     srv.request.is_rgb=true;
    //-----------------------------------images from dataset----------------------------------//
-//    string img_path=argv[11];
-//    string pc_path=argv[12];
+//    string img_path=argv[12];
+//    string pc_path=argv[13];
 //    ros::Time now =ros::Time::now();
 //    Mat cv_img=imread(img_path,IMREAD_COLOR);
 //    cv_bridge::CvImagePtr bridge_img_ptr(new cv_bridge::CvImage);
@@ -1061,7 +1087,9 @@ int main(int argc,char** argv)
 //    srv.response.pointcloud.header.frame_id="/camera_link";
 //    srv.response.pointcloud.header.stamp=now;
 
-
+    //Params
+    float region_growing_normal_thresh=25.0; //degree
+    float region_growing_curvature_thresh=2.0;
 
     //Publisher for visualize pointcloud in Rviz
     pointcloud_publisher scene_pc_pub(detector.getNodeHandle(),string("/rgbDetect/scene"));
@@ -1069,90 +1097,87 @@ int main(int argc,char** argv)
 
     //Bradocast tf from rgb to depth
     detector.setDepthToRGB_broadcastTF(-54.23,43.00,-25.59,0.25,-0.32,1.31);
-    detector.setTool0tDepth_broadcastTF(0.0487324, -0.0513127, 0.0444524,0.727184, 0.0136583, 0.012435, 0.686194);
+    detector.setTool0tDepth_broadcastTF(0.0652032, -0.060422, 0.0464063,0.707464, -0.00131294, 0.0106396, 0.706668);
 
     //Robot initial pose
     detector.moveToLookForTargetsPose(0.3,1.0);
 
+    //Set NMS Param
+    detector.setNonMaximumSuppressionRadisu(nms_neighbor_size);
+
+
+    string cmd;
     while(ros::ok())
     {
-        string cmd;
         cout<<"Start a new detetcion? Input [y] to begin, or [n] to quit. "<<endl;
         cin>>cmd;
         if(cmd == "y")
         {
-            while(ros::ok())
+            detector.getImages(srv);
+
+            //Object detection
+            vector<ClusterData> targets;
+            detector.detect_cb(srv.response.image,srv.response.pointcloud,srv.request.is_rgb,targets);
+
+            if(targets.size() == 0)
             {
-                detector.getImages(srv);                
+                cout<<"No object is found."<<endl;
 
-                //Object detection
-                vector<ClusterData> targets;
-                detector.detect_cb(srv.response.image,srv.response.pointcloud,srv.request.is_rgb,targets);
-
-                //Select one object to pick
-                //scene_pc_pub.publish(srv.response.pointcloud);
-                for(vector<ClusterData>::iterator it_target=targets.begin();it_target!=targets.end();++it_target)
-                {
-                    //Grasping pose generation
-                    Eigen::Affine3d grasp_pose_pDepth;
-                    detector.rgbd_detector.graspingPoseBasedOnRegionGrowing (it_target->scene_pc,0.008,grasp_pose_pDepth);
-                    //grasp_pose_pDepth=detector.getGraspingPose_Tpipe(*it_target);
-
-                    //model_pc_pub.publish(it_target->scene_pc,it_target->pose,cv::Scalar(255,0,0));
-
-                    //Transform grasping pose to robot frame
-                    Eigen::Affine3d grasp_pose_pBase = detector.transformPose(grasp_pose_pDepth);
-
-                    //Visuailze the grapsing pose
-//                    tf::Transform grasp_pose_tf_viz;
-//                    tf::poseEigenToTF(grasp_pose_pBase,grasp_pose_tf_viz);
-//                    tf::TransformBroadcaster tf_broadcaster;
-//                    tf_broadcaster.sendTransform (tf::StampedTransform(grasp_pose_tf_viz,ros::Time::now(),"base","grasp_frame"));
-
-                    //User decide whether this object should be picked
-                    //                cout<<"Pick up this object? Input [y] to say yes, [n] to skip, or [q] to restart detection."<<endl;
-                    //                cin >> cmd;
-                    //                if(cmd == "y")
-                    //                {
-
-                    //Move to prepick pose
-                    detector.moveToPrePickPose(grasp_pose_pBase,0.10);
-
-                    //Trajectory from pre-pick to pick
-                    moveit_msgs::RobotTrajectory traj;
-                    bool is_succeed=detector.linear_trajectory_planning(grasp_pose_pBase,0.05,10,traj);
-                    if(is_succeed)
-                    {                        
-                        detector.moveToPickTargetPose(traj);
-                        detector.pickTarget();
-                        //detector.pushTarget(grasp_pose_pBase,0.05);
-                        //Move back
-                        detector.moveToLookForTargetsPose(0.9,1.5);
-                        detector.moveToPLaceTargetsPose(grasp_pose_pBase,0.15); // grasp_pose_pBase is used as a pre-place pose
-                        detector.placeTarget();
-                    }else
-                    {
-                        cout<<"Skip to next object"<<endl;
-                    }
-                    //Go back to initial state
-                    detector.moveToLookForTargetsPose(0.7,1.5);
-
-                    //                }else if (cmd == "q")
-                    //                    break;
-                }
-
-                if(targets.size() == 0)
-                {
-                    cout<<"No object is found."<<endl;
-                    break;
-
-                }
             }
 
+            //Select one object to pick
+            //scene_pc_pub.publish(srv.response.pointcloud);
+            for(vector<ClusterData>::iterator it_target=targets.begin();it_target!=targets.end();++it_target)
+            {
+                //Grasping pose generation
+                double t=cv::getTickCount ();
+                Eigen::Affine3d grasp_pose_pDepth;
+                detector.rgbd_detector.graspingPoseBasedOnRegionGrowing (it_target->dense_scene_pc,it_target->scene_pc,region_growing_normal_thresh,region_growing_curvature_thresh,0.0,grasp_pose_pDepth,false);
+                t=(cv::getTickCount()-t)/cv::getTickFrequency ();
+                cout<<"Time consumed by grasping pose generation: "<<t<<endl;
+
+                //model_pc_pub.publish(it_target->scene_pc,it_target->pose,cv::Scalar(255,0,0));
+
+                //Transform grasping pose to robot frame
+                Eigen::Affine3d grasp_pose_pBase = detector.transformPose(grasp_pose_pDepth);
+
+                //Visuailze the grapsing pose
+                //                    tf::Transform grasp_pose_tf_viz;
+                //                    tf::poseEigenToTF(grasp_pose_pBase,grasp_pose_tf_viz);
+                //                    tf::TransformBroadcaster tf_broadcaster;
+                //                    tf_broadcaster.sendTransform (tf::StampedTransform(grasp_pose_tf_viz,ros::Time::now(),"base","grasp_frame"));
+
+                //Move to prepick pose
+                detector.moveToPrePickPose(grasp_pose_pBase,0.10);
+
+                //Trajectory from pre-pick to pick
+                moveit_msgs::RobotTrajectory traj;
+                bool is_succeed=detector.linear_trajectory_planning(grasp_pose_pBase,0.05,10,traj);
+                if(is_succeed)
+                {
+                    detector.moveToPickTargetPose(traj);
+                    detector.pickTarget();
+                    //detector.pushTarget(grasp_pose_pBase,0.05);
+                    //Move back
+                    detector.moveToLookForTargetsPose(0.9,0.5);
+                    detector.moveToPLaceTargetsPose(grasp_pose_pBase,0.15); // grasp_pose_pBase is used as a pre-place pose
+                    detector.placeTarget();
+                }else
+                {
+                    cout<<"Skip to next object"<<endl;
+                }
+                //Go back to initial state
+                detector.moveToLookForTargetsPose(0.7,1.5);
+
+                //                }else if (cmd == "q")
+                break;
+            }
         }
         else if(cmd == "n")
             break;
     }
+
+
 
     ros::shutdown();
 }

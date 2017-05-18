@@ -19,7 +19,7 @@ find_package(catkin REQUIRED COMPONENTS
   moveit_ros_planning_interface
 )
 # Use OpenCV 3.1.0.
-find_package (OpenCV REQUIRED)
+find_package (OpenCV 2 REQUIRED)
 find_package (PCL REQUIRED)
 find_package(orocos_kdl REQUIRED)
 
@@ -156,17 +156,18 @@ include_directories(
 #--------Renderer--------#
 add_executable(linemod_renderer_node src/test_renderer.cpp)
 add_executable(linemod_image_renderer_node src/renderer_only_image.cpp)
-add_executable(linemod_split_renderer_node src/linemod_split_renderer.cpp)
+add_executable(renderer_node src/renderer.cpp)
 
 #--------Detector--------#
-add_executable(linemod_detect_node src/linemod_detect.cpp src/linemod_icp.cpp src/linemod_pointcloud.cpp)# src/db_linemod.cpp)
-add_executable(linemod_ensenso_detect_node src/linemod_ensenso_detect.cpp src/linemod_icp.cpp src/linemod_pointcloud.cpp)
+#add_executable(linemod_detect_node src/linemod_detect.cpp src/linemod_icp.cpp src/linemod_pointcloud.cpp)# src/db_linemod.cpp)
+#add_executable(linemod_ensenso_detect_node src/linemod_ensenso_detect.cpp src/linemod_icp.cpp src/linemod_pointcloud.cpp)
 add_executable(linemod_carmine_detect_node src/linemod_carmine_detect.cpp src/linemod_icp.cpp src/linemod_pointcloud.cpp)
-add_executable(linemod_dataset_detect_node src/linemod_dataset_detect.cpp src/linemod_icp.cpp src/linemod_pointcloud.cpp)
-add_executable(picking_demo_node src/picking_demo.cpp src/linemod_icp.cpp src/linemod_pointcloud.cpp)
+#add_executable(linemod_dataset_detect_node src/linemod_dataset_detect.cpp src/linemod_icp.cpp src/linemod_pointcloud.cpp)
+#add_executable(picking_demo_node src/picking_demo.cpp src/linemod_icp.cpp src/linemod_pointcloud.cpp)
+#add_executable(test_pcl_visualizer src/test_pcl_visualizer.cpp)
 
 #--------Tool----------#
-add_executable(depth_camera_to_rgb_camera_broadcaster src/depth_camera_to_rgb_camera_broadcaster.cpp)
+#add_executable(depth_camera_to_rgb_camera_broadcaster src/depth_camera_to_rgb_camera_broadcaster.cpp)
 
 ## Add cmake target dependencies of the executable
 ## same as for the library above
@@ -183,29 +184,36 @@ target_link_libraries(linemod_renderer_node
   ${object_recognition_renderer_LIBRARIES}
 )
 
+target_link_libraries(renderer_node
+  ${catkin_LIBRARIES}
+  ${OpenCV_LIBRARIES}
+  ${object_recognition_renderer_LIBRARIES}
+)
+
 target_link_libraries(linemod_image_renderer_node
   ${catkin_LIBRARIES}
   ${OpenCV_LIBRARIES}
   ${object_recognition_renderer_LIBRARIES}
 )
 
-target_link_libraries(linemod_split_renderer_node
-  ${catkin_LIBRARIES}
-  ${OpenCV_LIBRARIES}
-  ${object_recognition_renderer_LIBRARIES}
-)
+#target_link_libraries(linemod_split_renderer_node
+#  ${catkin_LIBRARIES}
+#  ${OpenCV_LIBRARIES}
+#  ${object_recognition_renderer_LIBRARIES}
+#)
 
-target_link_libraries(linemod_detect_node
-  ${catkin_LIBRARIES}
-  ${OpenCV_LIBRARIES}
-)
+#target_link_libraries(linemod_detect_node
+#  ${catkin_LIBRARIES}
+#  ${OpenCV_LIBRARIES}
+#  rgbdDetector
+#)
 
-target_link_libraries(linemod_ensenso_detect_node
-  ${catkin_LIBRARIES}
-  ${OpenCV_LIBRARIES}
-  ${PCL_LIBRARIES}
-  rgbdDetector
-)
+#target_link_libraries(linemod_ensenso_detect_node
+#  ${catkin_LIBRARIES}
+#  ${OpenCV_LIBRARIES}
+#  ${PCL_LIBRARIES}
+#  rgbdDetector
+#)
 
 target_link_libraries(linemod_carmine_detect_node
   ${catkin_LIBRARIES}
@@ -214,20 +222,20 @@ target_link_libraries(linemod_carmine_detect_node
   rgbdDetector
 )
 
-target_link_libraries(linemod_dataset_detect_node
-  ${catkin_LIBRARIES}
-  ${OpenCV_LIBRARIES}
-  ${PCL_LIBRARIES}
-  rgbdDetector
-)
+#target_link_libraries(linemod_dataset_detect_node
+#  ${catkin_LIBRARIES}
+#  ${OpenCV_LIBRARIES}
+#  ${PCL_LIBRARIES}
+#  rgbdDetector
+#)
 
-target_link_libraries(picking_demo_node
-  ${catkin_LIBRARIES}
-  ${OpenCV_LIBRARIES}
-  ${PCL_LIBRARIES}
-  rgbdDetector
-  ${orocos_kdl_LIBRARIES}
-)
+#target_link_libraries(picking_demo_node
+#  ${catkin_LIBRARIES}
+#  ${OpenCV_LIBRARIES}
+#  ${PCL_LIBRARIES}
+#  rgbdDetector
+#  ${orocos_kdl_LIBRARIES}
+#)
 
 target_link_libraries(rgbdDetector
   ${catkin_LIBRARIES}
@@ -235,9 +243,14 @@ target_link_libraries(rgbdDetector
   ${PCL_LIBRARIES}
 )
 
-target_link_libraries(depth_camera_to_rgb_camera_broadcaster
-  ${catkin_LIBRARIES}
-)
+#target_link_libraries(depth_camera_to_rgb_camera_broadcaster
+#  ${catkin_LIBRARIES}
+#)
+
+#target_link_libraries(test_pcl_visualizer
+#  ${PCL_LIBRARIES}
+#)
+
 
 #target_link_libraries(linemod_detect_modified_node
 #  ${catkin_LIBRARIES}

@@ -51,6 +51,7 @@
 #include <pcl/octree/octree.h>
 #include <pcl/kdtree/kdtree_flann.h>
 #include <pcl/io/ply_io.h>
+#include <pcl/io/ply/ply.h>
 
 //ensenso
 #include <ensenso/RegistImage.h>
@@ -173,7 +174,8 @@ class linemod_detect
 
 public:
     Ptr<linemod::Detector> detector;
-    float threshold;
+    float linemod_match_threshold;
+    float collision_rate_threshold;
     bool is_K_read;
     cv::Vec3f T_ref;
 
@@ -252,7 +254,8 @@ public:
             clustering_step_(clustering_step),
             bias_x(0),
             image_width(rgbdDetector::CARMINE),
-            model_pc(new PointCloudXYZ)
+            model_pc(new PointCloudXYZ),
+            collision_rate_threshold(0.4)
         {
             //Publisher
             //pub_color_=it.advertise ("/sync_rgb",2);
@@ -264,7 +267,7 @@ public:
             //sub_cam_info=nh.subscribe("/camera/depth/camera_info",1,&linemod_detect::read_cam_info,this);
 
             //ork default param
-            threshold=detect_score_threshold;
+            linemod_match_threshold=detect_score_threshold;
 
             //read the saved linemod detecor
             detector=readLinemod (template_file_name);
@@ -370,22 +373,33 @@ public:
             mat_depth=sources[1];
 
             //Image for displaying detection
+            Mat initial_img=mat_rgb.clone();
             Mat display=mat_rgb.clone();
+            Mat final=mat_rgb.clone();
+            Mat cluster_img=mat_rgb.clone();
+            Mat nms_img = mat_rgb.clone();
 
             //Perform the LINEMOD detection
             std::vector<linemod::Match> matches;
             double t=cv::getTickCount ();
-            rgbd_detector.linemod_detection(detector,sources,threshold,matches);
+            rgbd_detector.linemod_detection(detector,sources,linemod_match_threshold,matches);
             t=(cv::getTickCount ()-t)/cv::getTickFrequency ();
-            cout<<"Time consumed by template matching: "<<t<<" s"<<endl;
+            //cout<<"Time consumed by template matching: "<<t<<" s"<<endl;
 
             //Display all the results
 //            for(std::vector<linemod::Match>::iterator it= matches.begin();it != matches.end();it++){
 //                std::vector<cv::linemod::Template> templates=detector->getTemplates(it->class_id, it->template_id);
 //                drawResponse(templates, 1, display,cv::Point(it->x,it->y), 2);
 //            }
-//            imshow("result",display);
-//            waitKey(0);
+//            imshow("intial results",display);
+//            waitKey(1);
+            for(std::vector<linemod::Match>::iterator it= matches.begin();it != matches.end();it++)
+            {
+                cv::Rect rect_tmp= Rects_[it->template_id];
+                rect_tmp.x=it->x;
+                rect_tmp.y=it->y;
+                rectangle(initial_img,rect_tmp,Scalar(0,0,255),2);
+            }
 
             //Clustering based on Row Col Depth
             std::map<std::vector<int>, std::vector<linemod::Match> > map_match;
@@ -393,63 +407,72 @@ public:
             //rcd_voting(vote_row_col_step, vote_depth_step, matches,map_match, voting_height_cells, voting_width_cells);
             rgbd_detector.rcd_voting(Obj_origin_dists,renderer_radius_min,clustering_step_,renderer_radius_step,matches,map_match);
             t=(cv::getTickCount ()-t)/cv::getTickFrequency ();
-            cout<<"Time consumed by rcd voting: "<<t<<" s"<<endl;
+            //cout<<"Time consumed by rcd voting: "<<t<<" s"<<endl;
+            //Display all the results
+//            RNG rng(0xFFFFFFFF);
+//            for(std::map<std::vector<int>, std::vector<linemod::Match> >::iterator it= map_match.begin();it != map_match.end();it++)
+//            {
+//                Scalar color(rng.uniform(0,255),rng.uniform(0,255),rng.uniform(0,255));
+//                for(std::vector<linemod::Match>::iterator it_v= it->second.begin();it_v != it->second.end();it_v++)
+//                    {
+//                    cv::Rect rect_tmp= Rects_[it_v->template_id];
+//                    rect_tmp.x=it_v->x;
+//                    rect_tmp.y=it_v->y;
+//                    rectangle(cluster_img,rect_tmp,color,2);
+//                }
+//            }
+//            imshow("cluster",cluster_img);
+//            cv::waitKey (0);
 
             //Filter based on size of clusters
-            uchar thresh=2;
+            uchar thresh=1;
             t=cv::getTickCount ();
-            //cluster_filter(map_match,thresh);
             rgbd_detector.cluster_filter(map_match,thresh);
             t=(cv::getTickCount ()-t)/cv::getTickFrequency ();
-            cout<<"Time consumed by cluster filter: "<<t<<" s"<<endl;
+            //cout<<"Time consumed by cluster filter: "<<t<<" s"<<endl;
 
             //Display
-            std::map<std::vector<int>, std::vector<linemod::Match> >::iterator it_map=map_match.begin();
-            for(;it_map!=map_match.end();++it_map)
-            {
-                for(std::vector<linemod::Match>::iterator it_vec= it_map->second.begin();it_vec != it_map->second.end();it_vec++){
-                    std::vector<cv::linemod::Template> templates=detector->getTemplates(it_vec->class_id, it_vec->template_id);
-                    drawResponse(templates, 1, mat_rgb,cv::Point(it_vec->x,it_vec->y), 2);
-                }
-            }
-            imshow("initial result",mat_rgb);
-            waitKey(0);
-
-            //Compute criteria for each cluster
-                //Output: Vecotor of ClusterData, each element of which contains index, score, flag of checking.
+//            std::map<std::vector<int>, std::vector<linemod::Match> >::iterator it_map=map_match.begin();
+//            for(;it_map!=map_match.end();++it_map)
+//            {
+//                for(std::vector<linemod::Match>::iterator it_vec= it_map->second.begin();it_vec != it_map->second.end();it_vec++){
+//                    std::vector<cv::linemod::Template> templates=detector->getTemplates(it_vec->class_id, it_vec->template_id);
+//                    drawResponse(templates, 1, display,cv::Point(it_vec->x,it_vec->y), 2);
+//                }
+//            }
+//            imshow("template clustering",display);
+//            waitKey(1);
 
             t=cv::getTickCount ();
-            //cluster_scoring(map_match,mat_depth,cluster_data);
-            rgbd_detector.cluster_scoring(map_match,mat_depth,cluster_data);
+            //Use match similarity score as evaluation
+            //rgbd_detector.cluster_scoring(map_match,mat_depth,cluster_data);
+            Matx33d K_tmp=Matx<double,3,3>(571.9737, 0.0, 319.5000,
+                                           0.0, 571.0073, 239.5000,
+                                           0.0, 0.0, 1.0);
+            Mat depth_tmp=depth_img.clone();
+            rgbd_detector.cluster_scoring(renderer_iterator_,K_tmp,Rs_,Ts_,map_match,depth_tmp,cluster_data);
             t=(cv::getTickCount ()-t)/cv::getTickFrequency ();
-            cout<<"Time consumed by scroing: "<<t<<endl;
+            //cout<<"Time consumed by scroing: "<<t<<endl;
 
             //Non-maxima suppression
             t=cv::getTickCount ();
             //nonMaximaSuppression(cluster_data,5,map_match);
-            //rgbd_detector.nonMaximaSuppression(cluster_data,5,Rects_,map_match);
-            nonMaximaSuppression(cluster_data,nms_radius,Rects_,map_match);
+            rgbd_detector.nonMaximaSuppression(cluster_data,nms_radius,Rects_,map_match);
+            //nonMaximaSuppression(cluster_data,nms_radius,Rects_,map_match);
             t=(cv::getTickCount ()-t)/cv::getTickFrequency ();
-            cout<<"Time consumed by non-maxima suppression: "<<t<<endl;
+            //cout<<"Time consumed by non-maxima suppression: "<<t<<endl;
 
             //Display
             for(vector<ClusterData>::iterator iter=cluster_data.begin();iter!=cluster_data.end();++iter)
             {
-                for(std::vector<linemod::Match>::iterator it= iter->matches.begin();it != iter->matches.end();it++)
-                {
-                    std::vector<cv::linemod::Template> templates=detector->getTemplates(it->class_id, it->template_id);
-                    drawResponse(templates, 1, mat_rgb,cv::Point(it->x,it->y), 2);
-                }
+                rectangle(nms_img,iter->rect,Scalar(0,0,255),2);
             }
-            imshow("Non-maxima suppression",mat_rgb);
-            waitKey(0);
 
             //Pose average
             t=cv::getTickCount ();
-            //getRoughPoseByClustering(cluster_data,pc_ptr);
             rgbd_detector.getRoughPoseByClustering(cluster_data,pc_ptr,Rs_,Ts_,Distances_,Obj_origin_dists,orientation_clustering_th_,renderer_iterator_,renderer_focal_length_x,renderer_focal_length_y,image_width,bias_x);
             t=(cv::getTickCount ()-t)/cv::getTickFrequency ();
-            cout<<"Time consumed by rough pose estimation : "<<t<<endl;
+            //cout<<"Time consumed by rough pose estimation : "<<t<<endl;
 
             //vizResultPclViewer(cluster_data,pc_ptr);
 
@@ -463,31 +486,30 @@ public:
             //Hypothesis verification
             t=cv::getTickCount ();
             //hypothesisVerification(cluster_data,0.002,0.15);
-            rgbd_detector.hypothesisVerification(cluster_data,0.004,0.40);
+            rgbd_detector.hypothesisVerification(cluster_data,0.004,collision_rate_threshold,false);
             t=(cv::getTickCount ()-t)/cv::getTickFrequency ();
-            cout<<"Time consumed by hypothesis verification: "<<t<<endl;
-
-
-            //Output the number of the image
-            cout<<"Serial Number: "<<serial_number<<endl;
+            //cout<<"Time consumed by hypothesis verification: "<<t<<endl;
 
             //Display all the bounding box
             for(int ii=0;ii<cluster_data.size();++ii)
             {
-                rectangle(display,cluster_data[ii].rect,Scalar(0,0,255),2);
+                rectangle(final,cluster_data[ii].rect,Scalar(0,0,255),2);
             }
-            imshow("display",display);
-            cv::waitKey (0);
 
-            //Viz in point cloud
+            //Viz
+            imshow("original image",mat_rgb);
+            imshow("intial results",initial_img);
+            imshow("Non-maxima suppression",nms_img);
+            imshow("final result",final);
+            cv::waitKey (1);
+
             //vizResultPclViewer(cluster_data,pc_ptr);
 
         }
 
-        void nonMaximaSuppression(vector<ClusterData>& cluster_data,const double& neighborSize, vector<Rect>& Rects_,std::map<std::vector<int>, std::vector<linemod::Match> >& map_match)
+        void nonMaximaSuppression(vector<ClusterData>& cluster_data,const double& neighborSize)
         {
-            vector<ClusterData> nms_cluster_data;
-            std::map<std::vector<int>, std::vector<linemod::Match> > nms_map_match;
+            vector<ClusterData> nms_cluster_data;            
             vector<ClusterData>::iterator it1=cluster_data.begin();
             double radius=neighborSize;
 
@@ -499,6 +521,7 @@ public:
                 point.y=it1->index[1];
                 point.z=0.0;
                 cluster_pc.points.push_back(point);
+                it1->is_checked=false;
             }
             //Create kd tree
 //            pcl::KdTreeFLANN<pcl::PointXYZ>::Ptr tree(new pcl::KdTreeFLANN<pcl::PointXYZ>);
@@ -537,18 +560,12 @@ public:
 
                     //Save the local maximum
                     nms_cluster_data.push_back(tmp_cluster[0]);
-                    cout<<"Index 1: "<<tmp_cluster[0].index[0]<<"  Index 2: "<<tmp_cluster[0].index[1]<<endl;
 
 
                     //Mark all of the NN as checked
                     for(std::vector<int>::iterator it_idx = pointIdxVec.begin();it_idx!=pointIdxVec.end();++it_idx)
                     {
                         cluster_data[*it_idx].is_checked=true;
-                        int x = cluster_data[*it_idx].index[0];
-                        int y = cluster_data[*it_idx].index[1];
-                        int x_pc = cluster_pc[*it_idx].x;
-                        int y_pc = cluster_pc[*it_idx].y;
-                        int p=0;
                     }
                 }
 
@@ -556,43 +573,6 @@ public:
 
             cluster_data.clear();
             cluster_data=nms_cluster_data;
-
-            //Add matches to cluster data
-            it1=cluster_data.begin();
-            for(;it1!=cluster_data.end();++it1)
-            {
-                std::map<std::vector<int>, std::vector<linemod::Match> >::iterator it2;
-                it2=map_match.find(it1->index);
-                nms_map_match.insert(*it2);
-                it1->matches=it2->second;
-            }
-
-            //Compute bounding box for each cluster
-            it1=cluster_data.begin();
-            for(;it1!=cluster_data.end();++it1)
-            {
-                int X=0; int Y=0; int WIDTH=0; int HEIGHT=0;
-                std::vector<linemod::Match>::iterator it2=it1->matches.begin();
-                for(;it2!=it1->matches.end();++it2)
-                {
-                    Rect tmp=Rects_[it2->template_id];
-                    X+=it2->x;
-                    Y+=it2->y;
-                    WIDTH+=tmp.width;
-                    HEIGHT+=tmp.height;
-                }
-                X/=it1->matches.size();
-                Y/=it1->matches.size();
-                WIDTH/=it1->matches.size();
-                HEIGHT/=it1->matches.size();
-
-                it1->rect=Rect(X,Y,WIDTH,HEIGHT);
-
-            }
-
-            map_match.clear();
-            map_match=nms_map_match;
-            int p=0;
         }
 
 
@@ -900,12 +880,11 @@ public:
             }
         }
 
-        void posePRAnalysis(double coeff, double model_diameter,int& TP,int& FP,int& FN,double& precision, double& recall)
+        void posePRAnalysis(string gr_file_path,double coeff, double model_diameter,int& TP,int& FP,int& FN,int& num_objs)
         {
             //Save ground truth to an eigen vector
-            string gr_file_path=gr_prefix + "poses" + gr_file_serial + ".txt";
-            vector<Eigen::Affine3d> gr_poses;
-            openGroundTruthFile(gr_file_path,gr_poses);
+            vector<Eigen::Affine3d> gr_poses;            
+            openGroundTruthFile(gr_file_path,gr_poses,num_objs);
 
             //Save position of ground truth to a kd tree for indexing
             pcl::KdTreeFLANN<pcl::PointXYZ>::Ptr position_tree(new pcl::KdTreeFLANN<pcl::PointXYZ>);
@@ -913,7 +892,7 @@ public:
 
             //For each estimated pose, assign the gr_poses: pair(estimated pose, ground truth)
             vector<pair<Eigen::Affine3d,Eigen::Affine3d> > pose_set;
-            assignGRPose(cluster_data, gr_poses, position_tree, -0.000329264,0.000714317,0.0119547, pose_set);
+            assignGRPose(cluster_data, gr_poses, position_tree, -0.000301369, -0.00420908, -0.00425946, pose_set);
 
             //trasnform model point cloud using estimated pose and ground truth pose
             vector<pair<PointCloudXYZ::Ptr,PointCloudXYZ::Ptr> > pc_set;
@@ -968,14 +947,14 @@ public:
                     }
                 }
 
-                //Normally tp would not be greater than 3
-                if(TP>3)
+                //Normally tp would not be greater than 2
+                if(TP>num_objs)
                 {
                     FN=0;
                 }
                 else
                 {
-                    FN=3-TP;
+                    FN=num_objs-TP;
                 }
 
             }
@@ -1013,19 +992,15 @@ public:
 
 
                 //Normally tp would not be greater than 3
-                if(TP>3)
+                if(TP>num_objs)
                 {
                     FN=0;
                 }
                 else
                 {
-                    FN=3-TP;
+                    FN=num_objs-TP;
                 }
             }
-
-            //Comptute Precision and Recall
-            precision=(double)TP/(double)(TP+FP);
-            recall=(double)TP/(double)(TP+FN);
 
         }
 
@@ -1118,7 +1093,20 @@ public:
             return true;
         }
 
-        bool openGroundTruthFile(string gr_file_path, vector<Eigen::Affine3d>& gr_poses)
+        bool checkGroundTruthFile(string gr_file_path)
+        {
+            ifstream file;
+            file.open(gr_file_path.data());
+            if(!file.is_open())
+                {
+                return false;
+            }else
+                {
+                return true;
+            }
+        }
+
+        bool openGroundTruthFile(string gr_file_path, vector<Eigen::Affine3d>& gr_poses,int& num_objs)
         {
             //Initiate position of ground truth
             gr_poses.clear();
@@ -1128,44 +1116,131 @@ public:
             if(!file.is_open())
                 return false;
 
-            string str;
+            string str,num_poses;
             int num_line=0;
+            int count=0;
+
+
             while(getline(file,str))
             {
                 num_line++;
-                if(num_line == 1 || num_line == 5 || num_line == 9)
-                {
-                    Eigen::Affine3d tmp_pose = Eigen::Affine3d::Identity();
-                    for(int i=0;i<3;++i)
+                if(num_line == 1)
                     {
-                        getline(file,str);
-                        num_line++;
-                        string::iterator it=str.begin();
-                        string::iterator it_end;
-                        for(int j=0;j<4;++j)
+                    num_poses = str;
+                    num_objs=atoi(str.data());
+                }
+                if(num_poses == "1")
+                {
+                    if(num_line == 1) //|| num_line == 9
+                    {
+                        Eigen::Affine3d tmp_pose = Eigen::Affine3d::Identity();
+                        for(int i=0;i<3;++i)
                         {
-                            while(*it == ' ')
-                                it++;
-
-                            it_end = it;
-
-                            if(j != 3)
+                            getline(file,str);
+                            num_line++;
+                            string::iterator it=str.begin();
+                            string::iterator it_end;
+                            for(int j=0;j<4;++j)
                             {
-                                while(*it_end != ' ')
-                                    it_end++;
+                                while(*it == ' ')
+                                    it++;
 
+                                it_end = it;
+
+                                if(j != 3)
+                                {
+                                    while(*it_end != ' ')
+                                        it_end++;
+
+                                }
+                                else
+                                {
+                                    it_end=str.end();
+                                }
+                                string tmp_str =string(it,it_end);
+                                tmp_pose.matrix()(i,j) = atof(tmp_str.data());
+                                it=it_end;
                             }
-                            else
-                            {
-                                it_end=str.end();
-                            }
-                            string tmp_str =string(it,it_end);
-                            tmp_pose.matrix()(i,j) = atof(tmp_str.data());
-                            it=it_end;
                         }
-                    }
-                    gr_poses.push_back(tmp_pose);
+                        gr_poses.push_back(tmp_pose);
 
+                    }
+                }
+
+                if(num_poses == "2")
+                {
+                    if(num_line == 1 || num_line == 5) //|| num_line == 9
+                    {
+                        Eigen::Affine3d tmp_pose = Eigen::Affine3d::Identity();
+                        for(int i=0;i<3;++i)
+                        {
+                            getline(file,str);
+                            num_line++;
+                            string::iterator it=str.begin();
+                            string::iterator it_end;
+                            for(int j=0;j<4;++j)
+                            {
+                                while(*it == ' ')
+                                    it++;
+
+                                it_end = it;
+
+                                if(j != 3)
+                                {
+                                    while(*it_end != ' ')
+                                        it_end++;
+
+                                }
+                                else
+                                {
+                                    it_end=str.end();
+                                }
+                                string tmp_str =string(it,it_end);
+                                tmp_pose.matrix()(i,j) = atof(tmp_str.data());
+                                it=it_end;
+                            }
+                        }
+                        gr_poses.push_back(tmp_pose);
+
+                    }
+                }
+
+                if(num_poses == "3")
+                {
+                    if(num_line == 1 || num_line == 5 || num_line == 9) //|| num_line == 9
+                    {
+                        Eigen::Affine3d tmp_pose = Eigen::Affine3d::Identity();
+                        for(int i=0;i<3;++i)
+                        {
+                            getline(file,str);
+                            num_line++;
+                            string::iterator it=str.begin();
+                            string::iterator it_end;
+                            for(int j=0;j<4;++j)
+                            {
+                                while(*it == ' ')
+                                    it++;
+
+                                it_end = it;
+
+                                if(j != 3)
+                                {
+                                    while(*it_end != ' ')
+                                        it_end++;
+
+                                }
+                                else
+                                {
+                                    it_end=str.end();
+                                }
+                                string tmp_str =string(it,it_end);
+                                tmp_pose.matrix()(i,j) = atof(tmp_str.data());
+                                it=it_end;
+                            }
+                        }
+                        gr_poses.push_back(tmp_pose);
+
+                    }
                 }
 
             }
@@ -1180,12 +1255,17 @@ public:
 
         void setTemplateMatchingThreshold(float threshold_)
         {
-            threshold = threshold_;
+            linemod_match_threshold = threshold_;
         }
 
         void setNonMaximumSuppressionRadisu(double radius)\
         {
             nms_radius=radius;
+        }
+
+        void setHypothesisVerficationThreshold(float threshold_)
+        {
+            collision_rate_threshold = threshold_;
         }
 
 };
@@ -1226,43 +1306,88 @@ int main(int argc,char** argv)
 
     //Read rgb and depth image
     serial_number=argv[12];
-    string img_path= "/home/yake/catkin_ws/src/linemod_pose_est/dataset/RGB/img_" + serial_number + ".png";
-    string depth_path= "/home/yake/catkin_ws/src/linemod_pose_est/dataset/Depth/img_" + serial_number + ".png";
-    string model_path = "/home/yake/catkin_ws/src/linemod_pose_est/dataset/PLY/coffee_cup_plain.ply";
+
+    string model_path = "/home/tom/ros/catkin_ws/src/linemod_pose_est/dataset/camera/PLY/camera_plain.ply";
+    string dataset_prefix="/home/tom/ros/catkin_ws/src/linemod_pose_est/dataset/camera/";
 
     //Extract file number for later use
-    gr_file_serial=getGRfileSerial(img_path);
-
-    //GR file loading test
-    //detector.posePRAnalysis();
+    //gr_file_serial=getGRfileSerial(img_path);
 
     //Load model pc
     detector.loadModelPC(model_path);
-
-    Mat rgb_img=imread(img_path,IMREAD_COLOR);
-    Mat depth_img=imread(depth_path,IMREAD_UNCHANGED);
-
-    static const int arr[] = {80};
-    vector<int> thresh_set (arr, arr + sizeof(arr) / sizeof(arr[0]) );
+    detector.setNonMaximumSuppressionRadisu(nms_radius);
 
 
-    for(int i=0;i<thresh_set.size();++i)
+    //static const int arr[] = {95,93,91,89,86,83,80,75};
+//    static const float arr[] = {0.0};
+//    vector<float> thresh_set (arr, arr + sizeof(arr) / sizeof(arr[0]) );
+    vector<float> thresh_set;
+    double hv_thresh=0.3;
+    thresh_set.push_back(hv_thresh);
+    for(int i=0;i<10;++i)
     {
-        //detector.setTemplateMatchingThreshold(thresh_set[i]);
-        detector.setNonMaximumSuppressionRadisu(nms_radius);
-        detector.detect_cb(rgb_img,depth_img);
-        //Get precision and recall
-        //Result analysis
-        int TP=0; int FP=0; int FN=0;
-        double precision, recall;
-        detector.posePRAnalysis(0.15,0.1745044074,TP,FP,FN,precision,recall);
-        cout<<"TP: "<<TP<<"  FP: "<<FP<<"  FN: "<<FN<<endl;
-        cout<<"Precision: "<<precision<<"  Recall: " <<recall<<endl;
-        cout<<"==================================================="<<endl;
-        int p=0;
+        hv_thresh+=0.05;
+        thresh_set.push_back(hv_thresh);
     }
 
+    //Create a txt file for data storage
+    ofstream outfile;
+    outfile.open("/home/tom/camera_HV_3_8_thresh90.txt");
+    if(!outfile)
+        return -1;
+
+    //Loop over all images
+    vector<string> rgb_filenames;
+    vector<string> depth_filenames;
+    cv::glob(dataset_prefix+"RGB/*.png",rgb_filenames);
+    cv::glob(dataset_prefix+"Depth/*.png",depth_filenames);
 
 
+    //int total_TP=0; int total_FP=0; int total_FN=0; int total_objs=0;
+    for(int i=0;i<thresh_set.size();++i)
+    {
+        int total_TP=0; int total_FP=0; int total_FN=0; int total_objs=0;
+        detector.setHypothesisVerficationThreshold(thresh_set[i]);
+        for(int j=0;j<400;++j)
+        {
+            //Check if ground truth file exists
+            gr_file_serial=getGRfileSerial(rgb_filenames[j]);
+            string gr_file_path=dataset_prefix+"Annotation/"+"poses"+gr_file_serial+".txt";
+            cout<<"Testing image: "<<gr_file_serial<<endl;
+            if(detector.checkGroundTruthFile(gr_file_path))
+            {
+
+                cout<<"Image order: "<<j<<endl;
+                Mat rgb_img=imread(rgb_filenames[j],IMREAD_COLOR);
+                Mat depth_img=imread(depth_filenames[j],IMREAD_UNCHANGED);
+
+                detector.detect_cb(rgb_img,depth_img);
+
+                //Result analysis
+                int TP=0; int FP=0; int FN=0; int num_objs=0;
+                detector.posePRAnalysis(gr_file_path,0.15,0.1438541511,TP,FP,FN,num_objs);
+                total_TP+=TP;
+                total_FP+=FP;
+                total_FN+=FN;
+                total_objs+=num_objs;
+
+                cout<<"TP: "<<TP<<"  FP: "<<FP<<"  FN: "<<FN<<"  threshold: "<<thresh_set[i]<<endl;
+                cout<<"==================================================="<<endl;
+
+            }
+        }
+        //Comptute Precision and Recall and F1
+        double precision, recall, f1;
+        precision=(double)total_TP/(double)(total_TP+total_FP);
+        recall=(double)total_TP/(double)(total_TP+total_FN);
+        f1 = 2*precision*recall/(precision+recall);
+
+        //save to txt
+        outfile<<thresh_set[i]<<" "<<total_objs<<" "<<total_TP<<" "<<total_FP<<" "<<total_FN<<" "<<precision<<" "<<recall<<" "<<f1;
+        outfile<<"\n";        
+        cout<<"Precision: "<<precision<<" Recall: "<<recall<<" F1: "<<f1<<endl;
+    }
+
+    outfile.close();
     ros::shutdown();
 }

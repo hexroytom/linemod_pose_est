@@ -161,6 +161,9 @@ public:
     //Wrapper for key methods
     rgbdDetector rgbd_detector;
 
+    //Non-maxima suppression neighbor size
+    int nms_radius;
+
 
 public:
     linemod_detect(std::string template_file_name,std::string renderer_params_name,std::string mesh_path,float detect_score_threshold,int icp_max_iter,float icp_tr_epsilon,float icp_fitness_threshold, float icp_maxCorresDist, uchar clustering_step,float orientation_clustering_th):
@@ -267,7 +270,7 @@ public:
 
             //imshow("grey",mat_grey);
             imshow("conbined_gray",mat_rgb);
-            waitKey(0);
+            waitKey(1);
         }
 
         //Convert pointcloud2 msg to PCL
@@ -293,13 +296,17 @@ public:
         //Crop the image
         cv::Rect crop(bias_x,0,640,480);
         Mat mat_rgb_crop=mat_rgb(crop);
-        Mat display=mat_rgb_crop;   //image for displaying results
+        Mat initial_img=mat_rgb_crop.clone();
+        Mat display=mat_rgb_crop.clone();
+        Mat final=mat_rgb_crop.clone();
+        Mat cluster_img=mat_rgb_crop.clone();
+        Mat cluster_filter_img=mat_rgb_crop.clone();
+        Mat nms_img=mat_rgb_crop.clone();
         Mat mat_depth_crop=mat_depth(crop);
 
         //Perform the detection
         std::vector<Mat> sources;
         sources.push_back (mat_rgb_crop);
-        //sources.push_back (mat_depth_crop);
         std::vector<linemod::Match> matches;
         double t;
         t=cv::getTickCount ();
@@ -307,29 +314,93 @@ public:
         t=(cv::getTickCount ()-t)/cv::getTickFrequency ();
 
         //Display all the results
-        //            for(std::vector<linemod::Match>::iterator it= matches.begin();it != matches.end();it++){
-        //                std::vector<cv::linemod::Template> templates=detector->getTemplates(it->class_id, it->template_id);
-        //                drawResponse(templates, 1, display,cv::Point(it->x,it->y), 2);
-        //            }
+        for(std::vector<linemod::Match>::iterator it= matches.begin();it != matches.end();it++){
+            std::vector<cv::linemod::Template> templates=detector->getTemplates(it->class_id, it->template_id);
+            drawResponse(templates, 1, initial_img,cv::Point(it->x,it->y), 2);
+        }
+//        for(std::vector<linemod::Match>::iterator it= matches.begin();it != matches.end();it++)
+//        {
+//            cv::Rect rect_tmp= Rects_[it->template_id];
+//            rect_tmp.x=it->x;
+//            rect_tmp.y=it->y;
+//            rectangle(initial_img,rect_tmp,Scalar(0,0,255),1);
+//        }
+        Mat gray_initial_img,mat_gray_crop;
+        cvtColor(initial_img,gray_initial_img,COLOR_BGR2GRAY);
+        cvtColor(mat_rgb_crop,mat_gray_crop,COLOR_BGR2GRAY);
+        imshow("origin",mat_gray_crop);
+        imshow("initial",initial_img);
+        cv::waitKey (1);
 
         //Clustering based on Row Col Depth
         std::map<std::vector<int>, std::vector<linemod::Match> > map_match;
         rgbd_detector.rcd_voting(Obj_origin_dists,renderer_radius_min,clustering_step_,renderer_radius_step,matches,map_match);
+        //Display all the results
+        RNG rng(0xFFFFFFFF);
+        for(std::map<std::vector<int>, std::vector<linemod::Match> >::iterator it= map_match.begin();it != map_match.end();it++)
+        {
+            Scalar color(rng.uniform(0,255),rng.uniform(0,255),rng.uniform(0,255));
+            for(std::vector<linemod::Match>::iterator it_v= it->second.begin();it_v != it->second.end();it_v++)
+                {
+                cv::Rect rect_tmp= Rects_[it_v->template_id];
+                rect_tmp.x=it_v->x;
+                rect_tmp.y=it_v->y;
+                rectangle(cluster_img,rect_tmp,color,2);
+            }
+        }
+        imshow("cluster",cluster_img);
+        cv::waitKey (1);
+
 
         //Filter based on size of clusters
-        uchar thresh=5;
+        uchar thresh=1;
         rgbd_detector.cluster_filter(map_match,thresh);
+        for(std::map<std::vector<int>, std::vector<linemod::Match> >::iterator it= map_match.begin();it != map_match.end();it++)
+        {
+            Scalar color(rng.uniform(0,255),rng.uniform(0,255),rng.uniform(0,255));
+            for(std::vector<linemod::Match>::iterator it_v= it->second.begin();it_v != it->second.end();it_v++)
+                {
+                cv::Rect rect_tmp= Rects_[it_v->template_id];
+                rect_tmp.x=it_v->x;
+                rect_tmp.y=it_v->y;
+                rectangle(cluster_filter_img,rect_tmp,Scalar(0,0,255),2);
+            }
+        }
+        imshow("cluster_filter",cluster_filter_img);
+
 
         //Compute criteria for each cluster
         //Output: Vecotor of ClusterData, each element of which contains index, score, flag of checking.
         vector<ClusterData> cluster_data;
         t=cv::getTickCount ();
+        Matx33d K_tmp=Matx<double,3,3>(824.88983154296875, 0.0, 330.480316162109375,
+                                       0.0, 824.88983154296875, 231.932891845703125,
+                                       0.0, 0.0, 1.0);
+        Mat depth_tmp=mat_depth.clone();
+        //rgbd_detector.cluster_scoring(renderer_iterator_,K_tmp,Rs_,Ts_,map_match,depth_tmp,cluster_data);
         rgbd_detector.cluster_scoring(map_match,mat_depth,cluster_data);
         t=(cv::getTickCount ()-t)/cv::getTickFrequency ();
         cout<<"Time consumed by scroing: "<<t<<endl;
 
         //Non-maxima suppression
-        rgbd_detector.nonMaximaSuppression(cluster_data,10,Rects_,map_match);
+        rgbd_detector.nonMaximaSuppression(cluster_data,nms_radius,Rects_,map_match);
+//        for(int i=0;i<cluster_data.size();++i)
+//            {
+//            rectangle(nms_img,cluster_data[i].rect,Scalar(0,0,255),2);
+//        }
+        for(vector<ClusterData>::iterator it_c = cluster_data.begin();it_c != cluster_data.end();++it_c)
+        {
+            vector<linemod::Match> matches_tmp = it_c->matches;
+            for(std::vector<linemod::Match>::iterator it= matches_tmp.begin();it != matches_tmp.end();it++)
+            {
+                std::vector<cv::linemod::Template> templates=detector->getTemplates(it->class_id, it->template_id);
+                drawResponse(templates, 1, nms_img,cv::Point(it->x,it->y), 2);
+            }
+        }
+        Mat gray_nms_img;
+        cvtColor(nms_img,gray_nms_img,COLOR_BGR2GRAY);
+        imshow("nms",nms_img);
+        cv::waitKey (0);
 
         //Pose average
         t=cv::getTickCount ();
@@ -337,39 +408,158 @@ public:
         t=(cv::getTickCount ()-t)/cv::getTickFrequency ();
         cout<<"Time consumed by pose clustering: "<<t<<endl;
 
+        //Viz corresponding scene pc
+//        for(int i=0;i<cluster_data.size();++i)
+//            {
+//            pcl::visualization::PCLVisualizer::Ptr v(new pcl::visualization::PCLVisualizer("view"));
+//            v->setBackgroundColor(255,255,255);
+//            pcl::visualization::PointCloudColorHandlerCustom<pcl::PointXYZ> color(cluster_data[i].scene_pc,0,0,0);
+//            v->addPointCloud(cluster_data[i].scene_pc,color,"cloud");
+//            v->spin();
+//        }
+
         //Pose refinement
-//        t=cv::getTickCount ();
-//        rgbd_detector.icpPoseRefine(cluster_data,icp,pc_ptr,image_width,bias_x,false);
-//        t=(cv::getTickCount ()-t)/cv::getTickFrequency ();
-//        cout<<"Time consumed by pose refinement: "<<t<<endl;
+        t=cv::getTickCount ();
+        rgbd_detector.icpPoseRefine(cluster_data,icp,pc_ptr,image_width,bias_x,true);
+        t=(cv::getTickCount ()-t)/cv::getTickFrequency ();
+        cout<<"Time consumed by pose refinement: "<<t<<endl;
 
         //Hypothesis verification
-        //rgbd_detector.hypothesisVerification(cluster_data,0.002,0.17);
+        rgbd_detector.hypothesisVerification(cluster_data,0.004,0.20,false);
 
         //Display all the bounding box
-        scene_pc_pub.publish (pc_ptr);
-        for(vector<ClusterData>::iterator it = cluster_data.begin();it!=cluster_data.end();++it)
-        {
-            //Display all grasping pose
-            Eigen::Affine3d grasp_pose;
-            rgbd_detector.graspingPoseBasedOnRegionGrowing (it->scene_pc,0.005,grasp_pose);
+//        scene_pc_pub.publish (pc_ptr);
+//        for(vector<ClusterData>::iterator it = cluster_data.begin();it!=cluster_data.end();++it)
+//        {
+//            //Display all grasping pose
+//            Eigen::Affine3d grasp_pose;
+//            rgbd_detector.graspingPoseBasedOnRegionGrowing (it->scene_pc,0.005,grasp_pose);
 
-            tf::Transform grasp_pose_tf_viz;
-            tf::poseEigenToTF(grasp_pose,grasp_pose_tf_viz);
-            tf::TransformBroadcaster tf_broadcaster;
-            tf_broadcaster.sendTransform (tf::StampedTransform(grasp_pose_tf_viz,ros::Time::now(),"camera_link","grasp_frame"));
+//            tf::Transform grasp_pose_tf_viz;
+//            tf::poseEigenToTF(grasp_pose,grasp_pose_tf_viz);
+//            tf::TransformBroadcaster tf_broadcaster;
+//            tf_broadcaster.sendTransform (tf::StampedTransform(grasp_pose_tf_viz,ros::Time::now(),"camera_link","grasp_frame"));
 
-            rectangle(display,it->rect,Scalar(0,0,255),2);
-            model_pc_pub.publish (it->model_pc,it->pose,cv::Scalar(255,0,0));
-            scene_cropped_pc_pub.publish(it->scene_pc,it->pose,cv::Scalar(0,255,0));
-            imshow("display",display);
-            cv::waitKey (0);
+//            rectangle(display,it->rect,Scalar(0,0,255),2);
+//            model_pc_pub.publish (it->model_pc,it->pose,cv::Scalar(255,0,0));
+//            scene_cropped_pc_pub.publish(it->scene_pc,it->pose,cv::Scalar(0,255,0));
+//            imshow("display",display);
+//            cv::waitKey (0);
+//        }
+
+        for(int i=0;i<cluster_data.size();++i)
+            {
+            rectangle(final,cluster_data[i].rect,Scalar(0,0,255),2);
         }
-
-
+        imshow("display",final);
+        cv::waitKey (0);
 
         //Viz in point cloud
-        //vizResultPclViewer(cluster_data,pc_ptr);
+        vizResultPclViewer(cluster_data,pc_ptr);
+
+    }
+
+    void graspingPoseBasedOnRegionGrowing(PointCloudXYZ::Ptr scene_pc,double offset,Eigen::Affine3d& grasping_pose)
+    {
+        //Params
+        float k_neigh_norest=10;
+        float k_neigh_reg=30;
+        grasping_pose=Eigen::Affine3d::Identity ();
+
+        //Denoise
+        //rgbd_detector.statisticalOutlierRemoval(scene_pc,50,1.0);
+
+        pcl::visualization::PCLVisualizer view("before region growing");
+        view.addPointCloud(scene_pc,"before region growing");
+        view.spin();
+
+        //Smooth
+        pcl::search::KdTree<pcl::PointXYZ>::Ptr tree_(new pcl::search::KdTree<pcl::PointXYZ>);
+        PointCloudXYZ::Ptr tmp_pc(new PointCloudXYZ);
+        pcl::MovingLeastSquares<pcl::PointXYZ,pcl::PointXYZ> mls;
+        mls.setInputCloud(scene_pc);
+        mls.setComputeNormals(false);
+        mls.setPolynomialFit(true);
+        mls.setSearchMethod(tree_);
+        mls.setSearchRadius(0.01);
+        mls.process(*tmp_pc);
+        pcl::copyPointCloud(*tmp_pc,*scene_pc);
+
+        //Normal estimation
+        pcl::NormalEstimationOMP<pcl::PointXYZ, pcl::Normal> norm_est;
+        norm_est.setKSearch (k_neigh_norest);
+        pcl::PointCloud<pcl::Normal>::Ptr scene_normals(new pcl::PointCloud<pcl::Normal>);
+        norm_est.setInputCloud (scene_pc);
+        norm_est.compute (*scene_normals);
+
+        //Region growing
+        pcl::RegionGrowing<pcl::PointXYZ, pcl::Normal> reg;
+        reg.setMinClusterSize (50);
+        reg.setMaxClusterSize (1000000);
+        pcl::search::Search<pcl::PointXYZ>::Ptr tree = boost::shared_ptr<pcl::search::Search<pcl::PointXYZ> > (new pcl::search::KdTree<pcl::PointXYZ>);
+        reg.setSearchMethod (tree);
+        reg.setNumberOfNeighbours (k_neigh_reg);
+        reg.setInputCloud (scene_pc);
+        //reg.setIndices (indices);
+        reg.setInputNormals (scene_normals);
+        /*The following two lines are most important part in the algorithm initialization, because they are responsible for the mentioned smoothness constraint.
+         * First method sets the angle in radians that will be used as the allowable range for the normals deviation.
+         * If the deviation between points normals is less than smoothness threshold then they are suggested to be in the same cluster (new point - the tested one - will be added to the cluster).
+         * The second one is responsible for curvature threshold.
+         * If two points have a small normals deviation then the disparity between their curvatures is tested. And if this value is less than curvature threshold then the algorithm will continue the growth of the cluster using new added point.*/
+        reg.setSmoothnessThreshold (2.0 / 180.0 * M_PI);
+        reg.setCurvatureThreshold (1.0);
+        std::vector <pcl::PointIndices> clusters;
+        reg.extract (clusters);
+        std::sort(clusters.begin(),clusters.end(),sortRegionIndx);
+        PointCloudXYZ::Ptr segmented_pc(new PointCloudXYZ);
+        rgbd_detector.extractPointsByIndices (boost::make_shared<pcl::PointIndices>(clusters[0]),scene_pc,segmented_pc,false,false);
+
+        pcl::visualization::PCLVisualizer view2("after region growing");
+        view2.addPointCloud(segmented_pc,"after region growing");
+        view2.spin();
+
+        //search centroid
+        //Get scene points centroid
+        Eigen::Matrix<double,4,1> centroid;
+        pcl::PointXYZ scene_surface_centroid;
+        pcl::Normal scene_surface_normal;
+        bool is_point_valid=true;
+        if(pcl::compute3DCentroid<pcl::PointXYZ,double>(*segmented_pc,centroid)!=0)
+        {
+            //Search nearest point to centroid point
+            int K = 1;
+            std::vector<int> pointIdxNKNSearch;
+            std::vector<float> pointNKNSquaredDistance;
+            float octree_res=0.001;
+            pcl::octree::OctreePointCloudSearch<pcl::PointXYZ>::Ptr octree(new pcl::octree::OctreePointCloudSearch<pcl::PointXYZ>(octree_res));
+
+            octree->setInputCloud(segmented_pc);
+            octree->addPointsFromInputCloud();
+            if (octree->nearestKSearch (pcl::PointXYZ(centroid[0],centroid[1],centroid[2]), K, pointIdxNKNSearch, pointNKNSquaredDistance) > 0)
+            {
+                scene_surface_centroid=segmented_pc->points[pointIdxNKNSearch[0]];
+                scene_surface_normal=scene_normals->at(clusters[0].indices[pointIdxNKNSearch[0]]);
+            }
+        }
+
+        //Orientation
+        Eigen::Vector4f ee_z_axis(0.0,0.0,1.0,0.0); //Just use camera's z axis. it could be robot's end-effector.
+        Eigen::Vector4f obj_surface_normal(scene_surface_normal.normal_x,scene_surface_normal.normal_y,scene_surface_normal.normal_z,0.0);
+        Eigen::Vector3d rot_axis(ee_z_axis[1]*obj_surface_normal[2]-ee_z_axis[2]*obj_surface_normal[1],
+                ee_z_axis[2]*obj_surface_normal[0]-ee_z_axis[0]*obj_surface_normal[2],
+                ee_z_axis[0]*obj_surface_normal[1]-ee_z_axis[1]*obj_surface_normal[0]);
+        double rot_angle = M_PI-pcl::getAngle3D(ee_z_axis,obj_surface_normal);
+        grasping_pose*=Eigen::AngleAxisd(-rot_angle,rot_axis);
+
+        //Position
+        grasping_pose.translation ()<<scene_surface_centroid.x,scene_surface_centroid.y,scene_surface_centroid.z;
+
+        //Offset
+        grasping_pose.translation()[0]-=offset*obj_surface_normal[0];
+        grasping_pose.translation()[1]-=offset*obj_surface_normal[1];
+        grasping_pose.translation()[2]-=offset*obj_surface_normal[2];
+
 
     }
 
@@ -578,6 +768,18 @@ public:
         return nh;
     }
 
+    void setNonMaximumSuppressionRadisu(double radius)\
+    {
+        nms_radius=radius;
+    }
+
+    void getImages(ensenso::RegistImage& srv)
+    {
+        ensenso_registImg_client.call(srv);
+        int p=0;
+
+    }
+
 };
 
 int main(int argc,char** argv)
@@ -593,6 +795,7 @@ int main(int argc,char** argv)
     float icp_maxCorresDist;
     uchar clustering_step;
     float orientation_clustering_step;
+    int nms_neighbor_size;
 
     linemod_template_path=argv[1];
     renderer_param_path=argv[2];
@@ -604,32 +807,34 @@ int main(int argc,char** argv)
     icp_maxCorresDist=atof(argv[8]);
     clustering_step=atoi(argv[9]);
     orientation_clustering_step=atof(argv[10]);
-
+    nms_neighbor_size=atoi(argv[11]);
     linemod_detect detector(linemod_template_path,renderer_param_path,model_stl_path,
                             detect_score_th,icp_max_iter,icp_tr_epsilon,icp_fitness_th,icp_maxCorresDist,clustering_step,orientation_clustering_step);
 
+    detector.setNonMaximumSuppressionRadisu(nms_neighbor_size);
     ensenso::RegistImage srv;
     srv.request.is_rgb=true;
     ros::Rate loop(1);
 
-    string img_path=argv[11];
-    string pc_path=argv[12];
-    ros::Time now =ros::Time::now();
-    Mat cv_img=imread(img_path,IMREAD_COLOR);
-    cv_bridge::CvImagePtr bridge_img_ptr(new cv_bridge::CvImage);
-    bridge_img_ptr->image=cv_img;
-    bridge_img_ptr->encoding="bgr8";
-    bridge_img_ptr->header.stamp=now;
-    srv.response.image = *bridge_img_ptr->toImageMsg();
+//    string img_path=argv[12];
+//    string pc_path=argv[13];
+//    ros::Time now =ros::Time::now();
+//    Mat cv_img=imread(img_path,IMREAD_COLOR);
+//    cv_bridge::CvImagePtr bridge_img_ptr(new cv_bridge::CvImage);
+//    bridge_img_ptr->image=cv_img;
+//    bridge_img_ptr->encoding="bgr8";
+//    bridge_img_ptr->header.stamp=now;
+//    srv.response.image = *bridge_img_ptr->toImageMsg();
 
-    PointCloudXYZ::Ptr pc(new PointCloudXYZ);
-    pcl::io::loadPCDFile(pc_path,*pc);
-    pcl::toROSMsg(*pc,srv.response.pointcloud);
-    srv.response.pointcloud.header.frame_id="/camera_link";
-    srv.response.pointcloud.header.stamp=now;
+//    PointCloudXYZ::Ptr pc(new PointCloudXYZ);
+//    pcl::io::loadPCDFile(pc_path,*pc);
+//    pcl::toROSMsg(*pc,srv.response.pointcloud);
+//    srv.response.pointcloud.header.frame_id="/camera_link";
+//    srv.response.pointcloud.header.stamp=now;
 
     while(ros::ok())
     {
+        detector.getImages(srv);
         detector.detect_cb(srv.response.image,srv.response.pointcloud,srv.request.is_rgb);
         loop.sleep();
     }

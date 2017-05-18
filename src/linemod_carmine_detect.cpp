@@ -5,6 +5,7 @@
 #include <sensor_msgs/Image.h>
 #include <sensor_msgs/PointCloud2.h>
 #include <sensor_msgs/CameraInfo.h>
+#include <linemod_pose_estimation/rgbdDetector.h>
 
 //tf
 #include <tf/transform_broadcaster.h>
@@ -145,6 +146,7 @@ public:
     bool is_K_read;
     cv::Vec3f T_ref;
 
+    //Params
     vector<Mat> Rs_,Ts_;
     vector<double> Distances_;
     vector<double> Obj_origin_dists;
@@ -166,15 +168,18 @@ public:
     double renderer_far;
     Renderer3d *renderer_;
     RendererIterator *renderer_iterator_;
+    float linemod_match_threshold;
+    float nms_radius;
+    float collision_rate_threshold;
+    rgbdDetector::IMAGE_WIDTH image_width;
+    int bias_x;
+    bool is_nms_neighbor_set;
+    bool is_hypothesis_verification_set;
 
     float px_match_min_;
     float icp_dist_min_;
     float orientation_clustering_th_;
 
-    LinemodPointcloud *pci_real_icpin_ref;
-    LinemodPointcloud *pci_real_icpin_model;
-    LinemodPointcloud *pci_real_nonICP_model;
-    LinemodPointcloud *pci_real_condition_filter_model;
     std::string depth_frame_id_;
 
     pcl::IterativeClosestPoint<pcl::PointXYZ, pcl::PointXYZ> icp;
@@ -191,6 +196,13 @@ public:
     //File path for ground truth
     std::string gr_prefix;
 
+    //Wrapped detector
+    rgbdDetector rgbd_detector;
+
+    vector<ClusterData> cluster_data;
+
+    Eigen::Matrix3d orient_modifying_matrix;
+
 
 public:
         linemod_detect(std::string template_file_name,std::string renderer_params_name,std::string mesh_path,float detect_score_threshold,int icp_max_iter,float icp_tr_epsilon,float icp_fitness_threshold, float icp_maxCorresDist, uchar clustering_step,float orientation_clustering_th):
@@ -203,7 +215,14 @@ public:
             sync(SyncPolicy(10), sub_color, sub_depth,sub_pc),
             px_match_min_(0.25f),
             icp_dist_min_(0.06f),
-            clustering_step_(clustering_step)
+            clustering_step_(clustering_step),
+            linemod_match_threshold(89),
+            nms_radius(4),
+            collision_rate_threshold(0.3),
+            image_width(rgbdDetector::CARMINE),
+            bias_x(0),
+            is_hypothesis_verification_set(false),
+            is_nms_neighbor_set(false)
         {
             //Publisher
             //pub_color_=it.advertise ("/sync_rgb",2);
@@ -214,8 +233,8 @@ public:
             //the intrinsic matrix
             sub_cam_info=nh.subscribe("/camera/depth/camera_info",1,&linemod_detect::read_cam_info,this);
 
-            //ork default param
-            threshold=detect_score_threshold;
+            //linemod detect thresh
+            linemod_match_threshold=detect_score_threshold;
 
             //read the saved linemod detecor
             detector=readLinemod (template_file_name);
@@ -238,12 +257,6 @@ public:
             renderer_iterator_->radius_max_ = float(renderer_radius_max);
             renderer_iterator_->radius_step_ = float(renderer_radius_step);
 
-            pci_real_icpin_model = new LinemodPointcloud(nh, "real_icpin_model", depth_frame_id_);
-            pci_real_icpin_ref = new LinemodPointcloud(nh, "real_icpin_ref", depth_frame_id_);
-            pci_real_condition_filter_model=new LinemodPointcloud(nh, "real_condition_filter", depth_frame_id_);
-            //pci_real_nonICP_model= new LinemodPointcloud(nh, "real_nonICP_model", depth_frame_id_);
-            //pci_real_1stICP_model= new LinemodPointcloud(nh, "real_1stICP_model", depth_frame_id_);
-
             icp.setMaximumIterations (icp_max_iter);
             icp.setMaxCorrespondenceDistance (icp_maxCorresDist);
             icp.setTransformationEpsilon (icp_tr_epsilon);
@@ -253,8 +266,8 @@ public:
             R_diag=Matx<float,3,3>(1.0,0.0,0.0,
                                   0.0,1.0,0.0,
                                   0.0,0.0,1.0);
-            K_rgb=Matx<double,3,3>(844.5966796875,0.0,338.907012939453125,
-                                   0.0,844.5966796875,232.793670654296875,
+            K_rgb=Matx<double,3,3>(535.566011,0.0,320,
+                                   0.0,535.566011,240,
                                    0.0,0.0,1.0);
 
             //Service client
@@ -277,9 +290,16 @@ public:
 
         void detect_cb(const sensor_msgs::ImageConstPtr& msg_rgb , const sensor_msgs::ImageConstPtr& msg_depth,const sensor_msgs::PointCloud2ConstPtr& msg_pc2)
         {
+            cluster_data.clear();
+
             //Read camera intrinsic params
             if(!is_K_read)
                 return;
+
+            //Check if non-maximum suppression or hypothesis verification set
+            if(!is_nms_neighbor_set || !is_hypothesis_verification_set)
+                return;
+
             //If LINEMOD detector is not loaded correctly, return
             if(detector->classIds ().empty ())
             {
@@ -297,94 +317,255 @@ public:
             mat_rgb=sources[0];
             mat_depth=sources[1];
 
+            //Image for displaying detection
+            Mat initial_img=mat_rgb.clone();
             Mat display=mat_rgb.clone();
-
-            if(detector->classIds ().empty ())
-            {
-                ROS_INFO("Linemod detector is empty");
-                return;
-            }
+            Mat final=mat_rgb.clone();
+            Mat cluster_img=mat_rgb.clone();
+            Mat cluster_filter_img=mat_rgb.clone();
+            Mat nms_img = mat_rgb.clone();
 
             //Perform the LINEMOD detection
             std::vector<linemod::Match> matches;
             double t=cv::getTickCount ();
-            detector->match (sources,threshold,matches,std::vector<String>(),noArray());
+            rgbd_detector.linemod_detection(detector,sources,linemod_match_threshold,matches);
             t=(cv::getTickCount ()-t)/cv::getTickFrequency ();
             cout<<"Time consumed by template matching: "<<t<<" s"<<endl;
-            cout<<"(1) LINEMOD Matching Result: "<< matches.size()<<endl;
-
 
             //Display all the results
-//            for(std::vector<linemod::Match>::iterator it= matches.begin();it != matches.end();it++){
-//                std::vector<cv::linemod::Template> templates=detector->getTemplates(it->class_id, it->template_id);
-//                drawResponse(templates, 1, display,cv::Point(it->x,it->y), 2);
-//            }
-//            imshow("result",display);
+                //Contour
+            for(std::vector<linemod::Match>::iterator it= matches.begin();it != matches.end();it++)
+            {
+                std::vector<cv::linemod::Template> templates=detector->getTemplates(it->class_id, it->template_id);
+                drawResponse(templates, 1, display,cv::Point(it->x,it->y), 2);
+            }
+//            imshow("intial results",display);
 //            waitKey(0);
+                //Rectangle
+//            for(std::vector<linemod::Match>::iterator it= matches.begin();it != matches.end();it++)
+//            {
+//                cv::Rect rect_tmp= Rects_[it->template_id];
+//                rect_tmp.x=it->x;
+//                rect_tmp.y=it->y;
+//                rectangle(initial_img,rect_tmp,Scalar(0,0,255),2);
+//            }
 
             //Clustering based on Row Col Depth
             std::map<std::vector<int>, std::vector<linemod::Match> > map_match;
-            int vote_row_col_step=clustering_step_;
-            double vote_depth_step=renderer_radius_step;
-            int voting_height_cells,voting_width_cells;
-            rcd_voting(vote_row_col_step, vote_depth_step, matches,map_match, voting_height_cells, voting_width_cells);
+            t=cv::getTickCount ();
+            //rcd_voting(vote_row_col_step, vote_depth_step, matches,map_match, voting_height_cells, voting_width_cells);
+            rgbd_detector.rcd_voting(Obj_origin_dists,renderer_radius_min,clustering_step_,renderer_radius_step,matches,map_match);
+            t=(cv::getTickCount ()-t)/cv::getTickFrequency ();
+            //cout<<"Time consumed by rcd voting: "<<t<<" s"<<endl;
+            //Display all the results
+            RNG rng(0xFFFFFFFF);
+            for(std::map<std::vector<int>, std::vector<linemod::Match> >::iterator it= map_match.begin();it != map_match.end();it++)
+            {
+                Scalar color(rng.uniform(0,255),rng.uniform(0,255),rng.uniform(0,255));
+                for(std::vector<linemod::Match>::iterator it_v= it->second.begin();it_v != it->second.end();it_v++)
+                {
+                    cv::Rect rect_tmp= Rects_[it_v->template_id];
+                    rect_tmp.x=it_v->x;
+                    rect_tmp.y=it_v->y;
+                    rectangle(cluster_img,rect_tmp,color,2);
+                }
+            }
+//            imshow("cluster",cluster_img);
+//            cv::waitKey (0);
+
 
             //Filter based on size of clusters
-            uchar thresh=3;
-            cluster_filter(map_match,thresh);
-
-            //Display
-            std::map<std::vector<int>, std::vector<linemod::Match> >::iterator it_map=map_match.begin();
-            for(;it_map!=map_match.end();++it_map)
-            {
-                for(std::vector<linemod::Match>::iterator it_vec= it_map->second.begin();it_vec != it_map->second.end();it_vec++){
-                    std::vector<cv::linemod::Template> templates=detector->getTemplates(it_vec->class_id, it_vec->template_id);
-                    drawResponse(templates, 1, display,cv::Point(it_vec->x,it_vec->y), 2);
-                }
-
-            }
-
-            imshow("result",display);
-            waitKey(0);
-
-            //Compute criteria for each cluster
-                //Output: Vecotor of ClusterData, each element of which contains index, score, flag of checking.
-            vector<ClusterData> cluster_data;
+            uchar thresh=1;
             t=cv::getTickCount ();
-            cluster_scoring(map_match,mat_depth,cluster_data);
+            rgbd_detector.cluster_filter(map_match,thresh);
             t=(cv::getTickCount ()-t)/cv::getTickFrequency ();
-            cout<<"Time consumed by scroing: "<<t<<endl;
-            int p=0;
+            cout<<"Time consumed by cluster filter: "<<t<<" s"<<endl;
+            for(std::map<std::vector<int>, std::vector<linemod::Match> >::iterator it= map_match.begin();it != map_match.end();it++)
+            {
+                Scalar color(rng.uniform(0,255),rng.uniform(0,255),rng.uniform(0,255));
+                for(std::vector<linemod::Match>::iterator it_v= it->second.begin();it_v != it->second.end();it_v++)
+                {
+                    cv::Rect rect_tmp= Rects_[it_v->template_id];
+                    rect_tmp.x=it_v->x;
+                    rect_tmp.y=it_v->y;
+                    rectangle(cluster_filter_img,rect_tmp,color,2);
+                }
+            }
+//            imshow("cluster filtered",cluster_filter_img);
+//            cv::waitKey (0);
+
+            //Use match similarity score as evaluation
+            //rgbd_detector.cluster_scoring(map_match,mat_depth,cluster_data);
+            Matx33d K_tmp=Matx<double,3,3>(535.566011, 0.0, 319.5000,
+                                           0.0, 537.168115, 239.5000,
+                                           0.0, 0.0, 1.0);
+            Mat depth_tmp=mat_depth.clone();
+            t=cv::getTickCount ();
+            rgbd_detector.cluster_scoring(renderer_iterator_,K_tmp,Rs_,Ts_,map_match,depth_tmp,cluster_data);
+            t=(cv::getTickCount ()-t)/cv::getTickFrequency ();
+            cout<<"Time consumed by scoring: "<<t<<endl;
+
 
             //Non-maxima suppression
-            nonMaximaSuppression(cluster_data,5,map_match);
+            t=cv::getTickCount ();
+            rgbd_detector.nonMaximaSuppression(cluster_data,nms_radius,Rects_,map_match);
+            t=(cv::getTickCount ()-t)/cv::getTickFrequency ();
+            cout<<"Time consumed by non-maxima suppression: "<<t<<endl;
+            //Display
+            for(vector<ClusterData>::iterator iter=cluster_data.begin();iter!=cluster_data.end();++iter)
+            {
+                rectangle(nms_img,iter->rect,Scalar(0,0,255),2);
+            }
+            imshow("Non-maxima suppression",nms_img);
+            cv::waitKey (0);
+
 
             //Pose average
             t=cv::getTickCount ();
-            getRoughPoseByClustering(cluster_data,pc_ptr);
+            rgbd_detector.getRoughPoseByClustering(cluster_data,pc_ptr,Rs_,Ts_,Distances_,Obj_origin_dists,orientation_clustering_th_,renderer_iterator_,renderer_focal_length_x,renderer_focal_length_y,image_width,bias_x,orient_modifying_matrix);
             t=(cv::getTickCount ()-t)/cv::getTickFrequency ();
-            cout<<"Time consumed by pose clustering: "<<t<<endl;
-
+            cout<<"Time consumed by rough pose estimation : "<<t<<endl;
             //vizResultPclViewer(cluster_data,pc_ptr);
+
 
             //Pose refinement
             t=cv::getTickCount ();
-            icpPoseRefine(cluster_data,pc_ptr,true);
+            rgbd_detector.icpPoseRefine(cluster_data,icp,pc_ptr,image_width,bias_x,false);
             t=(cv::getTickCount ()-t)/cv::getTickFrequency ();
             cout<<"Time consumed by pose refinement: "<<t<<endl;
 
+
+            //Hypothesis verification
+            t=cv::getTickCount ();
+            rgbd_detector.hypothesisVerification(cluster_data,0.004,collision_rate_threshold,false);
+            t=(cv::getTickCount ()-t)/cv::getTickFrequency ();
+            cout<<"Time consumed by hypothesis verification: "<<t<<endl;
             //Display all the bounding box
             for(int ii=0;ii<cluster_data.size();++ii)
             {
-                rectangle(display,cluster_data[ii].rect,Scalar(0,0,255),2);
+                rectangle(final,cluster_data[ii].rect,Scalar(0,0,255),2);
             }
 
-            imshow("display",display);
+            templateRefinement(cluster_data[0],pc_ptr);
+
+            //Viz            
+            imshow("final result",final);
             cv::waitKey (0);
 
-            //Viz in point cloud
             vizResultPclViewer(cluster_data,pc_ptr);
 
+        }
+
+        void templateRefinement(ClusterData object,PointCloudXYZ::Ptr pc_ptr)
+        {
+            //Get World--->Camera transform(camera pose), eye point up vector...
+            Eigen::Affine3d object_pose = object.pose;
+            Eigen::Affine3d c2_camera_pose = object_pose.inverse();
+
+            //Eye position
+            cv::Vec3d eye(c2_camera_pose.translation()[0], c2_camera_pose.translation()[1], c2_camera_pose.translation()[2]);
+            Eigen::Matrix3d camera_orientation = c2_camera_pose.linear();
+            //Up vector
+            cv::Vec3d up(-camera_orientation(0,1),-camera_orientation(1,1),-camera_orientation(2,1));
+            //Look at point
+            cv::Vec3d look_at_point = get_look_at_point(pc_ptr,c2_camera_pose);
+            //cv::Vec3d look_at_point(0.0,0.0,0.0);
+
+            //Render
+            cv::Mat depth_image, mask,flip_depth_image,flip_mask;
+            cv::Rect rect;
+            renderer_iterator_->renderDepthOnly(depth_image, mask, rect, eye, up,look_at_point);
+            cv::flip(depth_image,flip_depth_image,0);
+            cv::flip(mask,flip_mask,0);
+            cv::imshow("template refine",flip_mask);
+            waitKey(0);
+
+            Mat K_matrix=(Mat_<double>(3,3)<<renderer_focal_length_x,0.0,depth_image.cols/2,
+                                          0.0,renderer_focal_length_y,depth_image.rows/2,
+                                          0.0,0.0,1.0);
+            Mat pc_cv;
+            cv::depthTo3d(flip_depth_image,K_matrix,pc_cv);    //mm ---> m
+            PointCloudXYZ::Ptr refined_model_pc(new PointCloudXYZ);
+            refined_model_pc->header.frame_id="/camera_link";
+            for(int ii=0;ii<pc_cv.rows;++ii)
+            {
+                double* row_ptr=pc_cv.ptr<double>(ii);
+                for(int jj=0;jj<pc_cv.cols;++jj)
+                {
+                    double* data =row_ptr+jj*3;
+                    if(std::isnan(data[0]) || std::isnan(data[1]) || std::isnan(data[2]))
+                      continue;
+                    refined_model_pc->points.push_back(pcl::PointXYZ(data[0],data[1],data[2]));
+                }
+            }
+            std::vector<int> index1;
+            pcl::removeNaNFromPointCloud(*refined_model_pc,*refined_model_pc,index1);
+            pcl::removeNaNFromPointCloud(*pc_ptr,*pc_ptr,index1);
+            refined_model_pc->height=1;
+            refined_model_pc->width=refined_model_pc->points.size();
+
+            //ICP refine using new point cloud
+            //Coarse alignment
+            icp.setMaxCorrespondenceDistance(0.02);
+            icp.setEuclideanFitnessEpsilon(1e-6);
+            icp.setMaximumIterations(50);
+            icp.setRANSACOutlierRejectionThreshold(0.01);
+            icp.setInputSource (refined_model_pc);
+            icp.setInputTarget (pc_ptr);
+            icp.align (*(refined_model_pc));
+            if(!icp.hasConverged())
+            {
+                cout<<"ICP cannot converge"<<endl;
+            }
+            else{
+                //cout<<"ICP fitness score of coarse alignment: "<<icp.getFitnessScore()<<endl;
+            }
+
+            //Save pose and model points before icp
+            Eigen::Affine3d origin_object_pose = object.pose;
+            PointCloudXYZ::Ptr origin_model_pc(new PointCloudXYZ);
+            origin_model_pc=object.model_pc;
+
+            //Update pose
+            Eigen::Matrix4f tf_mat = icp.getFinalTransformation();
+            Eigen::Matrix4d tf_mat_d=tf_mat.cast<double>();
+            Eigen::Affine3d tf(tf_mat_d);
+            object.pose=tf*object.pose;
+
+            //Viz
+            pcl::visualization::PCLVisualizer v("template refinment");
+            pcl::visualization::PointCloudColorHandlerCustom<pcl::PointXYZ> refined_model_pc_color(refined_model_pc,0,255,0);
+            pcl::visualization::PointCloudColorHandlerCustom<pcl::PointXYZ> model_pc_color(origin_model_pc,255,0,0);
+
+            v.addPointCloud(refined_model_pc,refined_model_pc_color,"refined model");
+            //v.addPointCloud(origin_model_pc,model_pc_color,"model");
+            v.addPointCloud(pc_ptr);
+            v.addCoordinateSystem();
+            v.addCoordinateSystem(0.12,origin_object_pose.cast<float>());
+            v.addCoordinateSystem(0.08,object.pose.cast<float>());
+            v.spin();
+
+            object.model_pc = refined_model_pc;
+
+        }
+
+        cv::Vec3d get_look_at_point(PointCloudXYZ::Ptr scene_pc,Eigen::Affine3d transform)
+        {
+            int col = scene_pc->width/2;
+            int row = scene_pc->height/2;
+            pcl::PointXYZ look_at_point= scene_pc->at(col,row);
+            while(isnan(look_at_point.x) || isnan(look_at_point.y) || isnan(look_at_point.z))
+            {
+                col++;
+                look_at_point = scene_pc->at(col,row);
+            }
+            Eigen::Vector3d look_at_point_;
+            look_at_point_[0] = look_at_point.x;
+            look_at_point_[1] = look_at_point.y;
+            look_at_point_[2] = look_at_point.z;
+            look_at_point_ = transform * look_at_point_;
+            cv::Vec3d look_at_point_cv(look_at_point_[0],look_at_point_[1],look_at_point_[2]);
+            return look_at_point_cv;
         }
 
         static cv::Ptr<cv::linemod::Detector> readLinemod(const std::string& filename)
@@ -1391,15 +1572,18 @@ public:
         void vizResultPclViewer(const vector<ClusterData>& cluster_data,PointCloudXYZ::Ptr pc_ptr)
         {
             pcl::visualization::PCLVisualizer view("v");
-            view.addPointCloud(pc_ptr,"scene");
+            //view.addPointCloud(pc_ptr,"scene");
             for(int ii=0;ii<cluster_data.size();++ii)
             {
                 pcl::visualization::PointCloudColorHandlerRandom<pcl::PointXYZ> color(cluster_data[ii].model_pc);
                 string str="model ";
+                string str2="scene ";
                 stringstream ss;
                 ss<<ii;
                 str+=ss.str();
+                str2+=ss.str();
                 view.addPointCloud(cluster_data[ii].model_pc,color,str);
+                //view.addPointCloud(cluster_data[ii].scene_pc,str2);
 
                 //Get eigen tf
 //                Eigen::Affine3d obj_pose;
@@ -1409,9 +1593,9 @@ public:
 //                obj_pose.translation()<<cluster_data[ii].position[0],cluster_data[ii].position[1],cluster_data[ii].position[2];
 
                 Eigen::Affine3f obj_pose_f=cluster_data[ii].pose.cast<float>();
-                //Eigen::Affine3f obj_pose_f=obj_pose.cast<float>();
                 view.addCoordinateSystem(0.08,obj_pose_f);
             }
+            view.addPointCloud(pc_ptr,"scene points");
             view.spin();
         }
 
@@ -1488,6 +1672,28 @@ public:
              sources.push_back(mat_depth);
         }
 
+        void setTemplateMatchingThreshold(float threshold_)
+        {
+            linemod_match_threshold = threshold_;
+        }
+
+        void setNonMaximumSuppressionRadisu(double radius)\
+        {
+            nms_radius=radius;
+            is_nms_neighbor_set=true;
+        }
+
+        void setHypothesisVerficationThreshold(float threshold_)
+        {
+            collision_rate_threshold = threshold_;
+            is_hypothesis_verification_set=true;
+        }
+
+        void setOrientationModifyingMatrix(Eigen::Matrix3d modifying_mat)
+        {
+            orient_modifying_matrix=modifying_mat;
+        }
+
 };
 
 int main(int argc,char** argv)
@@ -1503,6 +1709,10 @@ int main(int argc,char** argv)
     float icp_maxCorresDist;
     uchar clustering_step;
     float orientation_clustering_step;
+    float nms_neighbor;
+    float hv_thresh;
+    Eigen::Vector3d rot_axis(0.0,0.0,1.0);
+    float orientation_modifying_degree;
 
     linemod_template_path=argv[1];
     renderer_param_path=argv[2];
@@ -1514,9 +1724,15 @@ int main(int argc,char** argv)
     icp_maxCorresDist=atof(argv[8]);
     clustering_step=atoi(argv[9]);
     orientation_clustering_step=atof(argv[10]);
+    nms_neighbor=atof(argv[11]);
+    hv_thresh=0.5;
+    orientation_modifying_degree=3.14;
+
 
     linemod_detect detector(linemod_template_path,renderer_param_path,model_stl_path,
                             detect_score_th,icp_max_iter,icp_tr_epsilon,icp_fitness_th,icp_maxCorresDist,clustering_step,orientation_clustering_step);
-
+    detector.setOrientationModifyingMatrix(Eigen::AngleAxisd(orientation_modifying_degree,rot_axis).matrix());
+    detector.setHypothesisVerficationThreshold(hv_thresh);
+    detector.setNonMaximumSuppressionRadisu(nms_neighbor);
     ros::spin ();
 }

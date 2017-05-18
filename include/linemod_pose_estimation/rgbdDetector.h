@@ -68,7 +68,8 @@ using namespace cv;
 struct ClusterData{
 
     ClusterData():
-        model_pc(new PointCloudXYZ)
+        model_pc(new PointCloudXYZ),
+        dense_scene_pc(new PointCloudXYZ)
     {
         index.resize(3);
         is_checked=false;
@@ -81,7 +82,8 @@ struct ClusterData{
         score(score_),
         is_checked(false),
         dist(0.0),
-        model_pc(new PointCloudXYZ)
+        model_pc(new PointCloudXYZ),
+        dense_scene_pc(new PointCloudXYZ)
     {
 
     }
@@ -99,7 +101,11 @@ struct ClusterData{
     double dist;
     PointCloudXYZ::Ptr model_pc;
     PointCloudXYZ::Ptr scene_pc;
+    PointCloudXYZ::Ptr dense_scene_pc;
     Eigen::Affine3d pose;
+    Eigen::Affine3d pose_pC1;
+    Eigen::Affine3d c1_tr_c2;
+    Scalar color;
 
 };
 
@@ -142,7 +148,11 @@ public:
 
     void cluster_filter(std::map<std::vector<int>, std::vector<linemod::Match> >& map_match,int thresh);
 
+    void cluster_filter(std::vector<ClusterData>& cluster_data,int thresh);
+
     void cluster_scoring(std::map<std::vector<int>, std::vector<linemod::Match> >& map_match,Mat& depth_img,std::vector<ClusterData>& cluster_data);
+
+    void cluster_scoring(RendererIterator *renderer_iterator_,Matx33d& K_rgb,vector<Mat>& Rs_,vector<Mat>& Ts_,std::map<std::vector<int>, std::vector<linemod::Match> >& map_match,Mat& depth_img,std::vector<ClusterData>& cluster_data);
 
     double similarity_score_calc(std::vector<linemod::Match> match_cluster);
 
@@ -156,11 +166,11 @@ public:
 
     void nonMaximaSuppression(vector<ClusterData>& cluster_data,const double& neighborSize, vector<Rect>& Rects_,std::map<std::vector<int>, std::vector<linemod::Match> >& map_match);
 
-    void getRoughPoseByClustering(vector<ClusterData>& cluster_data, PointCloudXYZ::Ptr pc, vector<Mat> &Rs_, vector<Mat> &Ts_, vector<double> &Distances_, vector<double> &Obj_origin_dists, float orientation_clustering_th_, RendererIterator *renderer_iterator_, double &renderer_focal_length_x, double& renderer_focal_length_y, IMAGE_WIDTH &image_width, int& bias_x);
+    void getRoughPoseByClustering(vector<ClusterData>& cluster_data, PointCloudXYZ::Ptr pc, vector<Mat> &Rs_, vector<Mat> &Ts_, vector<double> &Distances_, vector<double> &Obj_origin_dists, float orientation_clustering_th_, RendererIterator *renderer_iterator_, double &renderer_focal_length_x, double& renderer_focal_length_y, IMAGE_WIDTH &image_width, int& bias_x, Eigen::Matrix3d orientation_modify_matrix);
 
     bool orientationCompare(Eigen::Matrix3d& orien1,Eigen::Matrix3d& orien2,double thresh);
 
-    pcl::PointIndices::Ptr getPointCloudIndices(vector<ClusterData>::iterator& it, IMAGE_WIDTH image_width, int bias_x);
+    pcl::PointIndices::Ptr getPointCloudIndices(vector<ClusterData>::iterator& it, IMAGE_WIDTH image_width, int bias_x, Rect mask_rect);
 
     pcl::PointIndices::Ptr getPointCloudIndices(const cv::Rect& rect, IMAGE_WIDTH image_width,int bias_x);
 
@@ -168,7 +178,7 @@ public:
 
     void icpPoseRefine(vector<ClusterData>& cluster_data, pcl::IterativeClosestPoint<pcl::PointXYZ, pcl::PointXYZ> &icp, PointCloudXYZ::Ptr pc, IMAGE_WIDTH image_width, int bias_x, bool is_viz);
 
-    void icpNonLinearPoseRefine(vector<ClusterData>& cluster_data, PointCloudXYZ::Ptr pc, IMAGE_WIDTH image_width, int bias_x);
+    void icpNonLinearPoseRefine(vector<ClusterData>& cluster_data, PointCloudXYZ::Ptr pc, IMAGE_WIDTH image_width, int bias_x, Rect mask_rect);
 
     void euclidianClustering(PointCloudXYZ::Ptr pts,float dist);
 
@@ -176,9 +186,9 @@ public:
 
     void voxelGridFilter(PointCloudXYZ::Ptr pts, float leaf_size);
 
-    void hypothesisVerification(vector<ClusterData>& cluster_data, float octree_res, float thresh);
+    void hypothesisVerification(vector<ClusterData>& cluster_data, float octree_res, float thresh, bool is_viz);
 
-    void getPositionByDistanceOffset(vector<ClusterData>::iterator it, PointCloudXYZ::Ptr pc, int x_index, int y_index, IMAGE_WIDTH image_width, int bias_x, double DistanceOffset, double DistanceFromCamToObj, bool is_center_hole, Eigen::Vector3d& position, Eigen::Affine3d& transform);
+    void getPositionByDistanceOffset(vector<ClusterData>::iterator it, PointCloudXYZ::Ptr pc, int x_index, int y_index, IMAGE_WIDTH image_width, int bias_x, double DistanceOffset, double DistanceFromCamToObj, bool is_center_hole, Eigen::Vector3d& position, Eigen::Affine3d& transform, Rect mask_rect);
 
     void getPositionByROICenter(vector<ClusterData>::iterator it,PointCloudXYZ::Ptr pc,int x_index_scene,int y_index_scene,double DistanceFromCamToObj,Eigen::Affine3d& transform,Eigen::Vector3d& position);
 
@@ -186,7 +196,7 @@ public:
 
     void getPoseByLocalDescriptor(PointCloudXYZ::Ptr scene_pc, PointCloudXYZ::Ptr model_pc, double DistanceFromCamToObj,Eigen::Affine3d& pose, Eigen::Vector3d &position);
 
-    void graspingPoseBasedOnRegionGrowing(PointCloudXYZ::Ptr scene_pc, double offset, Eigen::Affine3d& grasping_pose);
+    void graspingPoseBasedOnRegionGrowing(PointCloudXYZ::Ptr dense_scene_pc, PointCloudXYZ::Ptr scene_pc, float normal_thresh, float curvature_thresh, double offset, Eigen::Affine3d& grasping_pose, bool is_viz);
 
     //Utilities
     cv::Ptr<cv::linemod::Detector> readLinemod(const std::string& filename);

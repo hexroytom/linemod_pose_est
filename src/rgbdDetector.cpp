@@ -69,10 +69,27 @@ void rgbdDetector::cluster_filter(std::map<std::vector<int>, std::vector<linemod
     std::map<std::vector<int>, std::vector<linemod::Match> >::iterator it= map_match.begin();
     for(;it!=map_match.end();++it)
     {
-       if(it->second.size()<thresh)
+       if(it->second.size()<=thresh)
        {
            map_match.erase(it);
        }
+    }
+
+
+}
+
+void rgbdDetector::cluster_filter(std::vector<ClusterData>& cluster_data,int thresh)
+{
+    std::vector<ClusterData>::iterator it = cluster_data.begin();
+    for(;it!=cluster_data.end();)
+    {
+        if(it->matches.size()<thresh)
+        {
+            it=cluster_data.erase(it);
+        }else
+        {
+            it++;
+        }
     }
 
 
@@ -85,6 +102,20 @@ void rgbdDetector::cluster_scoring(std::map<std::vector<int>, std::vector<linemo
     {
         //Perform depth difference computation and normal difference computation
         //double score=depth_normal_diff_calc(it_map->second,depth_img);
+        //Options: similairy score computation
+        double score=similarity_score_calc(it_map->second);
+        cluster_data.push_back(ClusterData(it_map->first,score));
+
+    }
+}
+
+void rgbdDetector::cluster_scoring(RendererIterator *renderer_iterator_,Matx33d& K_rgb,vector<Mat>& Rs_,vector<Mat>& Ts_,std::map<std::vector<int>, std::vector<linemod::Match> >& map_match,Mat& depth_img,std::vector<ClusterData>& cluster_data)
+{
+    std::map<std::vector<int>, std::vector<linemod::Match> >::iterator it_map= map_match.begin();
+    for(;it_map!=map_match.end();++it_map)
+    {
+        //Perform depth difference computation and normal difference computation
+        //double score=depth_normal_diff_calc(renderer_iterator_,K_rgb,Rs_,Ts_,it_map->second,depth_img);
         //Options: similairy score computation
         double score=similarity_score_calc(it_map->second);
         cluster_data.push_back(ClusterData(it_map->first,score));
@@ -128,6 +159,8 @@ double rgbdDetector::depth_normal_diff_calc(RendererIterator *renderer_iterator_
         renderer_iterator_->renderDepthOnly(depth_template,template_mask, rect, -T_match, up);//up?
         rect.x = it_match->x;
         rect.y = it_match->y;
+        cv::imshow("scoring",template_mask);
+        cv::waitKey(0);
 
         //Compute depth diff for each match
         sum_depth_diff+=depth_diff(depth_img,depth_template,template_mask,rect);
@@ -147,15 +180,20 @@ double rgbdDetector::depth_diff(Mat& depth_img,Mat& depth_template,cv::Mat& temp
     Mat depth_roi=depth_img(rect);
     //Convert ROI into a mask. NaN point of depth image will become zero in mask image
     Mat depth_mask;
-    depth_roi.convertTo(depth_mask,CV_8UC1,1,0);
+    //depth_roi.convertTo(depth_mask,CV_8UC1,1,0);
+    depth_mask=Mat::zeros(depth_img.rows,depth_img.cols,CV_8UC1);
+    depth_mask(rect)=255;
     //And operation. Only valid points in both images will be considered.
     Mat mask;
     bitwise_and(template_mask,depth_mask,mask);
+    cv::imshow("template mask",template_mask);
+    cv::imshow("depth_mask",depth_mask);
+    cv::waitKey(0);
 
     //Perform subtraction and accumulate differences
     //-------- Method A for computing depth diff----//
     Mat subtraction(depth_template.size(),CV_16SC1);
-    subtraction=depth_template-depth_roi;
+    subtraction=depth_template-depth_img;
     MatIterator_<uchar> it_mask=mask.begin<uchar>();
     MatIterator_<short> it_subs=subtraction.begin<short>();
     double sum=0.0;
@@ -164,12 +202,13 @@ double rgbdDetector::depth_diff(Mat& depth_img,Mat& depth_template,cv::Mat& temp
     {
         if(*it_mask>0)
         {
-            sum=sum+(double)(1/(abs(*it_subs)+1));
+            //sum=sum+(double)(1/(abs(*it_subs)+1));
+            sum=sum+(double)(abs(*it_subs));
             num++;
         }
 
     }
-    sum=sum/num;
+    sum=(sum/(num*1000.0));
     //-------Method B for computing depth diff----//
 //                 t1=cv::getTickCount();
 //                 Mat subtraction=Mat::zeros(depth_template.size(),CV_16SC1);
@@ -184,41 +223,75 @@ double rgbdDetector::depth_diff(Mat& depth_img,Mat& depth_template,cv::Mat& temp
 
 double rgbdDetector::normal_diff(cv::Mat& depth_img,Mat& depth_template,cv::Mat& template_mask,cv::Rect& rect,Matx33d& K_rgb)
 {
-    //Crop ROI in depth image according to the rect
-    Mat depth_roi=depth_img(rect);
     //Convert ROI into a mask. NaN point of depth image will become zero in mask image
+    Mat depth_roi=depth_img(rect);
     Mat depth_mask;
-    depth_roi.convertTo(depth_mask,CV_8UC1,1,0);
+    //depth_roi.convertTo(depth_mask,CV_8UC1,1,0);
+    depth_mask=Mat::zeros(depth_img.rows,depth_img.cols,CV_8UC1);
+    depth_mask(rect)=255;
     //And operation. Only valid points in both images will be considered.
     Mat mask;
     bitwise_and(template_mask,depth_mask,mask);
 
-    //Normal estimation for both depth images
-   RgbdNormals normal_est(depth_roi.rows,depth_roi.cols,CV_64F,K_rgb,5,RgbdNormals::RGBD_NORMALS_METHOD_LINEMOD);
-   Mat template_normal,roi_normal;
-   normal_est(depth_roi,roi_normal);
-   normal_est(depth_template,template_normal);
+    //Type conversion
+    Mat depth_roi_64f;
+    depth_roi.convertTo(depth_roi_64f,CV_64F);
+    Mat depth_template_64f;
+    depth_template.convertTo(depth_template_64f,CV_64F);
+
+    //Normal estimation for template depth image
+   RgbdNormals template_normal_est(depth_template.rows,depth_template.cols,CV_32F,K_rgb,7,RgbdNormals::RGBD_NORMALS_METHOD_LINEMOD);
+   Mat template_normal;
+   template_normal_est(depth_template,template_normal);
+
+   //Normal Estimation for roi depth image
+   RgbdNormals roi_normal_est(depth_img.rows,depth_img.cols,CV_32F,K_rgb,7,RgbdNormals::RGBD_NORMALS_METHOD_LINEMOD);
+   Mat depth_img_normal,roi_normal;
+   roi_normal_est(depth_img,depth_img_normal);
+   roi_normal=depth_img_normal(rect);
+
 
    //Compute normal diff
-   Mat subtraction=roi_normal-template_normal;
+   Mat subtraction=depth_img_normal-template_normal;
    MatIterator_<uchar> it_mask=mask.begin<uchar>();
    MatIterator_<Vec3d> it_subs=subtraction.begin<Vec3d>();
    double sum=0.0;
    int num=0;
-   for(;it_mask!=mask.end<uchar>();++it_mask,++it_subs)
+//   for(;it_mask!=mask.end<uchar>();++it_mask,++it_subs)
+//   {
+//       if(*it_mask>0)
+//       {
+//           if(isValidDepth((*it_subs)[0]) && isValidDepth((*it_subs)[1]) && isValidDepth((*it_subs)[2]))
+//           {
+//               double abs_diff=abs((*it_subs)[0])+abs((*it_subs)[1])+abs((*it_subs)[2]);
+//               //sum+=1/(abs_diff+1);
+//               sum+=abs_diff;
+//               num++;
+//           }
+
+
+//       }
+
+//   }
+   for(int i=0;i<mask.rows;i++)
    {
-       if(*it_mask>0)
+       for(int j=0;j<mask.cols;j++)
        {
-           if(isValidDepth((*it_subs)[0]) && isValidDepth((*it_subs)[1]) && isValidDepth((*it_subs)[2]))
+           if(mask.at<uchar>(i,j)>0)
            {
-               double abs_diff=abs((*it_subs)[0])+abs((*it_subs)[1])+abs((*it_subs)[2]);
-               sum+=1/(abs_diff+1);
-               num++;
+               cv::Vec3f template_normal_vec_cv = template_normal.at<Vec3f>(i,j);
+               cv::Vec3f roi_normal_vec_cv = depth_img_normal.at<Vec3f>(i,j);
+               if(abs(cv::norm(template_normal_vec_cv)-1.0)<0.0001 && abs(cv::norm(roi_normal_vec_cv)-1.0)<0.0001)
+               {
+                   Eigen::Vector4f model_normal_vec((float)template_normal.at<Vec3f>(i,j)[0],(float)template_normal.at<Vec3f>(i,j)[1],(float)template_normal.at<Vec3f>(i,j)[2],0.0);
+                   Eigen::Vector4f roi_normal_vec((float)depth_img_normal.at<Vec3f>(i,j)[0],(float)depth_img_normal.at<Vec3f>(i,j)[1],(float)depth_img_normal.at<Vec3f>(i,j)[2],0.0);
+                   sum+=pcl::getAngle3D(model_normal_vec,roi_normal_vec);
+                   num++;
+               }
            }
-
        }
-
    }
+
    sum/=num;
    return sum;
 
@@ -272,15 +345,43 @@ void rgbdDetector::nonMaximaSuppression(vector<ClusterData>& cluster_data,const 
 
     //Compute bounding box for each cluster
     it1=cluster_data.begin();
+//    for(;it1!=cluster_data.end();++it1)
+//    {
+//        int X=0; int Y=0; int WIDTH=0; int HEIGHT=0;
+//        std::vector<linemod::Match>::iterator it2=it1->matches.begin();
+//        for(;it2!=it1->matches.end();++it2)
+//        {
+//            Rect tmp=Rects_[it2->template_id];
+//            X+=it2->x;
+//            Y+=it2->y;
+//            WIDTH+=tmp.width;
+//            HEIGHT+=tmp.height;
+//        }
+//        X/=it1->matches.size();
+//        Y/=it1->matches.size();
+//        WIDTH/=it1->matches.size();
+//        HEIGHT/=it1->matches.size();
+
+//        it1->rect=Rect(X,Y,WIDTH,HEIGHT);
+
+//    }
+
     for(;it1!=cluster_data.end();++it1)
     {
-        int X=0; int Y=0; int WIDTH=0; int HEIGHT=0;
+        int X=0; int Y=0; int WIDTH=0; int HEIGHT=0; int max_width=0; int max_height=0;
         std::vector<linemod::Match>::iterator it2=it1->matches.begin();
         for(;it2!=it1->matches.end();++it2)
         {
             Rect tmp=Rects_[it2->template_id];
             X+=it2->x;
             Y+=it2->y;
+            //Use max width/height
+//            if(tmp.width>max_width)
+//                max_width=tmp.width;
+//            if(tmp.height>max_height)
+//                max_height=tmp.height;
+
+            //Use average width/height
             WIDTH+=tmp.width;
             HEIGHT+=tmp.height;
         }
@@ -301,11 +402,14 @@ void rgbdDetector::nonMaximaSuppression(vector<ClusterData>& cluster_data,const 
 double rgbdDetector::getClusterScore(const double& depth_diff_score,const double& normal_diff_score)
 {
     //Simply add two scores
-    return(depth_diff_score+normal_diff_score);
+    //return(depth_diff_score+normal_diff_score);
+    double depth_similarity = 1/exp(depth_diff_score);
+    double normal_similarity=1/exp(normal_diff_score);
+    return(depth_similarity*normal_similarity);
 
 }
 
-void rgbdDetector::getRoughPoseByClustering(vector<ClusterData>& cluster_data,PointCloudXYZ::Ptr pc,vector<Mat>& Rs_,vector<Mat>& Ts_, vector<double>& Distances_,vector<double>& Obj_origin_dists,float orientation_clustering_th_,RendererIterator *renderer_iterator_,double& renderer_focal_length_x,double& renderer_focal_length_y,IMAGE_WIDTH& image_width,int& bias_x)
+void rgbdDetector::getRoughPoseByClustering(vector<ClusterData>& cluster_data,PointCloudXYZ::Ptr pc,vector<Mat>& Rs_,vector<Mat>& Ts_, vector<double>& Distances_,vector<double>& Obj_origin_dists,float orientation_clustering_th_,RendererIterator *renderer_iterator_,double& renderer_focal_length_x,double& renderer_focal_length_y,IMAGE_WIDTH& image_width,int& bias_x,Eigen::Matrix3d orientation_modify_matrix)
 {
     //For each cluster
     for(vector<ClusterData>::iterator it = cluster_data.begin();it!=cluster_data.end();++it)
@@ -358,24 +462,24 @@ void rgbdDetector::getRoughPoseByClustering(vector<ClusterData>& cluster_data,Po
         std::sort(xyClusters.begin(),xyClusters.end(),sortXyCluster);
 
         //Test display all the poses in 1st cluster
-//                 for(int i=0;i<idClusters[0].size();++i)
-//                 {
-//                     int ID=idClusters[0][i];
-//                     //get the pose
-//                     cv::Matx33d R_match = Rs_[ID].clone();// rotation of the object w.r.t to the view point
-//                     cv::Vec3d T_match = Ts_[ID].clone();//the translation of the camera with respect to the current view point
-//                     cv::Mat K_matrix= Ks_[ID].clone();
-//                     cv::Mat mask;
-//                     cv::Rect rect;
-//                     cv::Matx33d R_temp(R_match.inv());//rotation of the viewpoint w.r.t the object
-//                     cv::Vec3d up(-R_temp(0,1), -R_temp(1,1), -R_temp(2,1));//the negative direction of y axis of viewpoint w.r.t object frame
-//                     cv::Mat depth_ref_;
-//                     renderer_iterator_->renderDepthOnly(depth_ref_, mask, rect, -T_match, up);
-//                     imshow("mask",mask);
-//                     waitKey(0);
-//                 }
+//        for(int i=0;i<idClusters[0].size();++i)
+//        {
+//            int ID=idClusters[0][i];
+//            //get the pose
+//            cv::Matx33d R_match = Rs_[ID].clone();// rotation of the object w.r.t to the view point
+//            cv::Vec3d T_match = Ts_[ID].clone();//the translation of the camera with respect to the current view point
+//            //cv::Mat K_matrix= Ks_[ID].clone();
+//            cv::Mat mask;
+//            cv::Rect rect;
+//            cv::Matx33d R_temp(R_match.inv());//rotation of the viewpoint w.r.t the object
+//            cv::Vec3d up(-R_temp(0,1), -R_temp(1,1), -R_temp(2,1));//the negative direction of y axis of viewpoint w.r.t object frame
+//            cv::Mat depth_ref_;
+//            renderer_iterator_->renderDepthOnly(depth_ref_, mask, rect, -T_match, up);
+//            imshow("mask",mask);
+//            waitKey(0);
+//        }
 
-       //Test average all poses in 1st cluster
+       //Average all poses in 1st cluster
         Eigen::Vector3d T_aver(0.0,0.0,0.0);
         Eigen::Vector4d R_aver(0.0,0.0,0.0,0.0);
         double D_aver=0.0;
@@ -421,28 +525,78 @@ void rgbdDetector::getRoughPoseByClustering(vector<ClusterData>& cluster_data,Po
         R_eig=quat.toRotationMatrix();
         eigen2cv(R_eig,R_mat);
 
-        if(fabs(D_aver-Trans_aver) < 0.001)
-            {
-            is_center_hole=true;
-        }
+//        if(fabs(D_aver-Trans_aver) < 0.001)
+//            {
+//            is_center_hole=true;
+//        }
 
-        cv::Mat mask;
-        cv::Rect rect;
-        cv::Matx33d R_match(R_mat);
-        cv::Matx33d R_temp(R_match.inv());//rotation of the viewpoint w.r.t the object
-        cv::Vec3d up(-R_temp(0,1), -R_temp(1,1), -R_temp(2,1));//the negative direction of y axis of viewpoint w.r.t object frame
-        cv::Mat depth_render;
+        cv::Mat mask,flip_mask;
+        cv::Rect mask_rect,flip_mask_rect;
+        cv::Matx33d R_match(R_mat); //object orientaton
+        cv::Matx33d R_cam = R_match.inv();
+        cv::Vec3d up(-R_cam(0,1), -R_cam(1,1), -R_cam(2,1));//the negative direction of y axis of viewpoint w.r.t object frame
+        cv::Mat depth_render, flip_depth_render;
         cv::Vec3d T_match;
         T_match[0]=T_aver[0];
         T_match[1]=T_aver[1];
         T_match[2]=T_aver[2];
-        renderer_iterator_->renderDepthOnly(depth_render, mask, rect, -T_match, up);
-//                 imshow("mask",mask);
-//                 waitKey(0);
+        renderer_iterator_->renderDepthOnly(depth_render, mask, mask_rect, -T_match, up);
+        cv::flip(depth_render,flip_depth_render,0);
+        cv::flip(mask,flip_mask,0);
+        imshow("flip_mask oupt",flip_mask);
+        imshow("mask oupt",mask);
+        waitKey(0);
 
-        //Save mask and ROI
-        it->mask=mask;
-        it->rect=rect;
+        //Save mask
+        it->mask=flip_mask;
+
+        //Save rect
+        int min_x=0;
+        int min_y=0;
+
+        //Search min y
+        for(int i=0;i<flip_mask.rows;++i)
+        {
+          bool found_min_y=false;
+          for(int j=0;j<flip_mask.cols;++j)
+          {
+            if(flip_mask.at<uchar>(i,j) == 255)
+              {
+                min_y=i;
+                found_min_y=true;
+                break;
+              }
+          }
+          if(found_min_y)
+            break;
+        }
+
+        //Search min x
+        for(int j =0;j<flip_mask.cols;++j)
+        {
+          bool found_min_x=false;
+          for(int i =0;i<flip_mask.rows;++i)
+          {
+            if(flip_mask.at<uchar>(i,j) == 255)
+            {
+              min_x=j;
+              found_min_x=true;
+              break;
+            }
+
+          }
+          if(found_min_x)
+          {
+            break;
+          }
+        }
+
+
+        flip_mask_rect=mask_rect;
+        flip_mask_rect.y = min_y;
+        flip_mask_rect.x = min_x;
+        it->rect.width=mask_rect.width;
+        it->rect.height=mask_rect.height;
         it->rect.x=X;
         it->rect.y=Y;
 
@@ -450,43 +604,47 @@ void rgbdDetector::getRoughPoseByClustering(vector<ClusterData>& cluster_data,Po
         it->orientation=R_match;
         it->T_match=T_match;
         it->dist=D_aver;
-        it->K_matrix=(Mat_<double>(3,3)<<renderer_focal_length_x,0.0,rect.width/2,
-                                      0.0,renderer_focal_length_y,rect.height/2,
+        it->K_matrix=(Mat_<double>(3,3)<<renderer_focal_length_x,0.0,depth_render.cols/2,
+                                      0.0,renderer_focal_length_y,depth_render.rows/2,
                                       0.0,0.0,1.0);
-        it->pose.linear()=R_eig;
 
-        //Save position
-        int x=X+rect.width/2;
-        int y=Y+rect.height/2;
-        //Add offset to x due to previous cropping operation
-        x+=bias_x;
+        it->pose.linear()=R_eig;
+        it->pose.translation()<<0.0,0.0,Trans_aver;
+
 
         //Get render point cloud
         Mat pc_cv;
-        cv::depthTo3d(depth_render,it->K_matrix,pc_cv);    //mm ---> m
-        it->model_pc->width=pc_cv.cols;
-        it->model_pc->height=pc_cv.rows;
-        it->model_pc->resize(pc_cv.cols*pc_cv.rows);
+        cv::depthTo3d(flip_depth_render,it->K_matrix,pc_cv);    //mm ---> m
         it->model_pc->header.frame_id="/camera_link";
         for(int ii=0;ii<pc_cv.rows;++ii)
         {
             double* row_ptr=pc_cv.ptr<double>(ii);
             for(int jj=0;jj<pc_cv.cols;++jj)
             {
-                double* data =row_ptr+jj*3;
-                //cout<<" "<<data[0]<<" "<<data[1]<<" "<<data[2]<<endl;
-                it->model_pc->at(jj,ii).x=data[0];
-                it->model_pc->at(jj,ii).y=data[1];
-                it->model_pc->at(jj,ii).z=data[2];
+                if(flip_mask.at<uchar>(ii,jj)>0)
+                {
+                    double* data =row_ptr+jj*3;
+                    it->model_pc->points.push_back(pcl::PointXYZ(data[0],data[1],data[2]));
+                }
             }
         }
+        it->model_pc->height=1;
+        it->model_pc->width=it->model_pc->points.size();
 
         //Get scene point cloud indices
         pcl::PointIndices::Ptr indices(new pcl::PointIndices);
-        indices=getPointCloudIndices(it,image_width,bias_x);
+        indices=getPointCloudIndices(it,image_width,bias_x,flip_mask_rect);
         //Extract scene pc according to indices
         PointCloudXYZ::Ptr scene_pc(new PointCloudXYZ);
         extractPointsByIndices(indices,pc,scene_pc,false,false);
+
+//        pcl::visualization::PCLVisualizer view("v");
+//        view.addPointCloud(it->model_pc,"model");
+//        view.addPointCloud(scene_pc,"scene");
+//        Eigen::Affine3f obj_pose_f=it->pose.cast<float>();
+//        view.addCoordinateSystem(0.08,obj_pose_f);
+//        view.spin();
+
         //Remove Nan points
         vector<int> index;
         it->model_pc->is_dense=false;
@@ -494,10 +652,14 @@ void rgbdDetector::getRoughPoseByClustering(vector<ClusterData>& cluster_data,Po
         pcl::removeNaNFromPointCloud(*scene_pc,*scene_pc,index);
         //Statistical outlier removal
         statisticalOutlierRemoval(scene_pc,50,1.0);
-        euclidianClustering(scene_pc,0.01);
-//        float leaf_size=0.002;
-//        voxelGridFilter(scene_pc,leaf_size);
-//        voxelGridFilter(it->model_pc,leaf_size);
+
+        //Other preprocessing technique
+//        euclidianClustering(scene_pc,0.01);
+        //Save dense scene pc first
+        pcl::copyPointCloud(*scene_pc,*(it->dense_scene_pc));
+        float leaf_size=0.002;
+        voxelGridFilter(scene_pc,leaf_size);
+        voxelGridFilter(it->model_pc,leaf_size);
 
         //Save scene point cloud for later HV
         it->scene_pc=scene_pc;
@@ -635,7 +797,7 @@ void rgbdDetector::getPoseByLocalDescriptor(PointCloudXYZ::Ptr scene_pc,PointClo
     position = Eigen::Vector3d(0.0+transform(0,3),0.0+transform(1,3),DistanceFromCamToObj+transform(2,3));
 }
 
-void rgbdDetector::getPositionByDistanceOffset(vector<ClusterData>::iterator it,PointCloudXYZ::Ptr pc,int x_index,int y_index,IMAGE_WIDTH image_width,int bias_x,double DistanceOffset,double DistanceFromCamToObj,bool is_center_hole,Eigen::Vector3d& position, Eigen::Affine3d& transform)
+void rgbdDetector::getPositionByDistanceOffset(vector<ClusterData>::iterator it,PointCloudXYZ::Ptr pc,int x_index,int y_index,IMAGE_WIDTH image_width,int bias_x,double DistanceOffset,double DistanceFromCamToObj,bool is_center_hole,Eigen::Vector3d& position, Eigen::Affine3d& transform,cv::Rect mask_rect)
 {
     pcl::PointXYZ bbox_center =pc->at(x_index,y_index);
     //Deal with the situation that there is a hole in ROI or in the model pointcloud during rendering
@@ -645,7 +807,7 @@ void rgbdDetector::getPositionByDistanceOffset(vector<ClusterData>::iterator it,
         pcl::PointIndices::Ptr indices_tmp(new pcl::PointIndices());
         vector<int> index_tmp;
 
-        indices_tmp=getPointCloudIndices(it,image_width,bias_x);
+        indices_tmp=getPointCloudIndices(it,image_width,bias_x,mask_rect);
         extractPointsByIndices(indices_tmp,pc,pts_tmp,false,false);
         pcl::removeNaNFromPointCloud(*pts_tmp,*pts_tmp,index_tmp);
 
@@ -727,12 +889,15 @@ void rgbdDetector::getPositionBySurfaceCentroid(PointCloudXYZ::Ptr scene_pc,Poin
         int K = 1;
         std::vector<int> pointIdxNKNSearch;
         std::vector<float> pointNKNSquaredDistance;
-        float octree_res=0.001;
-        pcl::octree::OctreePointCloudSearch<pcl::PointXYZ>::Ptr octree(new pcl::octree::OctreePointCloudSearch<pcl::PointXYZ>(octree_res));
+//        float octree_res=0.001;
+//        pcl::octree::OctreePointCloudSearch<pcl::PointXYZ>::Ptr octree(new pcl::octree::OctreePointCloudSearch<pcl::PointXYZ>(octree_res));
+        pcl::KdTreeFLANN<pcl::PointXYZ> tree;
 
-        octree->setInputCloud(scene_pc);
-        octree->addPointsFromInputCloud();
-        if (octree->nearestKSearch (pcl::PointXYZ(scene_centroid[0],scene_centroid[1],scene_centroid[2]), K, pointIdxNKNSearch, pointNKNSquaredDistance) > 0)
+//        octree->setInputCloud(scene_pc);
+//        octree->addPointsFromInputCloud();
+
+        tree.setInputCloud(scene_pc);
+        if (tree.nearestKSearch (pcl::PointXYZ(scene_centroid[0],scene_centroid[1],scene_centroid[2]), K, pointIdxNKNSearch, pointNKNSquaredDistance) > 0)
         {
             scene_surface_centroid=scene_pc->points[pointIdxNKNSearch[0]];
         }
@@ -783,25 +948,26 @@ void rgbdDetector::getPositionBySurfaceCentroid(PointCloudXYZ::Ptr scene_pc,Poin
     }
 }
 
-void rgbdDetector::graspingPoseBasedOnRegionGrowing(PointCloudXYZ::Ptr scene_pc,double offset,Eigen::Affine3d& grasping_pose)
+void rgbdDetector::graspingPoseBasedOnRegionGrowing(PointCloudXYZ::Ptr dense_scene_pc,PointCloudXYZ::Ptr scene_pc,float normal_thresh, float curvature_thresh,double offset,Eigen::Affine3d& grasping_pose,bool is_viz)
 {
     //Params
-    float k_neigh_norest=10;
+    float k_neigh_norest=50;
     float k_neigh_reg=30;
     grasping_pose=Eigen::Affine3d::Identity ();
 
     //Denoise
-    statisticalOutlierRemoval(scene_pc,50,1.0);
+    //statisticalOutlierRemoval(scene_pc,50,1.0);
+//    voxelGridFilter(scene_pc,0.002);
 
     //Smooth
     pcl::search::KdTree<pcl::PointXYZ>::Ptr tree_(new pcl::search::KdTree<pcl::PointXYZ>);
     PointCloudXYZ::Ptr tmp_pc(new PointCloudXYZ);
     pcl::MovingLeastSquares<pcl::PointXYZ,pcl::PointXYZ> mls;
     mls.setInputCloud(scene_pc);
-    mls.setComputeNormals(false);
+    mls.setComputeNormals(true);
     mls.setPolynomialFit(true);
     mls.setSearchMethod(tree_);
-    mls.setSearchRadius(0.01);
+    mls.setSearchRadius(0.04);
     mls.process(*tmp_pc);
     pcl::copyPointCloud(*tmp_pc,*scene_pc);
 
@@ -810,6 +976,7 @@ void rgbdDetector::graspingPoseBasedOnRegionGrowing(PointCloudXYZ::Ptr scene_pc,
     norm_est.setKSearch (k_neigh_norest);
     pcl::PointCloud<pcl::Normal>::Ptr scene_normals(new pcl::PointCloud<pcl::Normal>);
     norm_est.setInputCloud (scene_pc);
+    norm_est.setSearchSurface(dense_scene_pc);
     norm_est.compute (*scene_normals);
 
     //Region growing
@@ -827,13 +994,21 @@ void rgbdDetector::graspingPoseBasedOnRegionGrowing(PointCloudXYZ::Ptr scene_pc,
      * If the deviation between points normals is less than smoothness threshold then they are suggested to be in the same cluster (new point - the tested one - will be added to the cluster).
      * The second one is responsible for curvature threshold.
      * If two points have a small normals deviation then the disparity between their curvatures is tested. And if this value is less than curvature threshold then the algorithm will continue the growth of the cluster using new added point.*/
-    reg.setSmoothnessThreshold (5.0 / 180.0 * M_PI);
-    reg.setCurvatureThreshold (1.0);
+    reg.setSmoothnessThreshold (normal_thresh / 180.0 * M_PI);
+    reg.setCurvatureThreshold (curvature_thresh);
     std::vector <pcl::PointIndices> clusters;
     reg.extract (clusters);
     std::sort(clusters.begin(),clusters.end(),sortRegionIndx);
     PointCloudXYZ::Ptr segmented_pc(new PointCloudXYZ);
     extractPointsByIndices (boost::make_shared<pcl::PointIndices>(clusters[0]),scene_pc,segmented_pc,false,false);
+
+    //Viz for test
+    if(is_viz)
+    {
+        pcl::visualization::PCLVisualizer::Ptr v(new pcl::visualization::PCLVisualizer);
+        v->addPointCloud<pcl::PointXYZ>(segmented_pc);
+        v->spin();
+    }
 
     //search centroid
     //Get scene points centroid
@@ -855,7 +1030,14 @@ void rgbdDetector::graspingPoseBasedOnRegionGrowing(PointCloudXYZ::Ptr scene_pc,
         if (octree->nearestKSearch (pcl::PointXYZ(centroid[0],centroid[1],centroid[2]), K, pointIdxNKNSearch, pointNKNSquaredDistance) > 0)
         {
             scene_surface_centroid=segmented_pc->points[pointIdxNKNSearch[0]];
-            scene_surface_normal=scene_normals->at(clusters[0].indices[pointIdxNKNSearch[0]]);
+            //scene_surface_normal=scene_normals->at(clusters[0].indices[pointIdxNKNSearch[0]]);
+
+            norm_est.setKSearch (k_neigh_norest);
+            pcl::PointCloud<pcl::Normal>::Ptr scene_normals(new pcl::PointCloud<pcl::Normal>);
+            norm_est.setInputCloud (segmented_pc);
+            norm_est.setSearchSurface(scene_pc);
+            norm_est.compute (*scene_normals);
+            scene_surface_normal=scene_normals->at(pointIdxNKNSearch[0]);
         }
     }
 
@@ -902,49 +1084,50 @@ void rgbdDetector::icpPoseRefine(vector<ClusterData>& cluster_data,pcl::Iterativ
     if(is_viz)
     {
         v=boost::make_shared<pcl::visualization::PCLVisualizer>("view");
+        //v->setBackgroundColor(255,255,255);
     }
     int id=0;
     for(vector<ClusterData>::iterator it = cluster_data.begin();it!=cluster_data.end();++it)
     {
-//       //Get scene point cloud indices
-//        pcl::PointIndices::Ptr indices(new pcl::PointIndices);
-//        indices=getPointCloudIndices(it,image_width,bias_x);
-//       //Extract scene pc according to indices
-//        PointCloudXYZ::Ptr scene_pc(new PointCloudXYZ);
-//        extractPointsByIndices(indices,pc,scene_pc,false,false);
+        //PreProcessing
+        //        //Remove Nan points
+        //        vector<int> index;
+        //        it->model_pc->is_dense=false;
+        //        pcl::removeNaNFromPointCloud(*(it->model_pc),*(it->model_pc),index);
+        //        pcl::removeNaNFromPointCloud(*scene_pc,*scene_pc,index);
+        //Statistical outlier removal
+        //statisticalOutlierRemoval(it->scene_pc,50,1.0);
+        //Smooth
+//        pcl::search::KdTree<pcl::PointXYZ>::Ptr tree_(new pcl::search::KdTree<pcl::PointXYZ>);
+//        PointCloudXYZ::Ptr tmp_pc(new PointCloudXYZ);
+//        pcl::MovingLeastSquares<pcl::PointXYZ,pcl::PointXYZ> mls;
+//        mls.setInputCloud(it->scene_pc);
+//        mls.setComputeNormals(true);
+//        mls.setPolynomialFit(true);
+//        mls.setSearchMethod(tree_);
+//        mls.setSearchRadius(0.01);
+//        mls.process(*tmp_pc);
+//        pcl::copyPointCloud(*tmp_pc,*(it->scene_pc));
+        //Downsample
+//        voxelGridFilter(it->scene_pc,0.002);
+//        voxelGridFilter(it->model_pc,0.002);
+        //        //euclidianClustering(scene_pc,0.01);
 
 //        //Viz for test
-//        if(is_viz)
-//        {
-//            string model_str="model";
-//            string scene_str="scene";
-//            stringstream ss;
-//            ss<<id;
-//            model_str+=ss.str();
-//            scene_str+=ss.str();
-//            pcl::visualization::PointCloudColorHandlerRandom<pcl::PointXYZ> color(it->model_pc);
-//            v->addPointCloud(scene_pc,scene_str);
-//            v->addPointCloud(it->model_pc,color,model_str);
-//            v->spin();
-//        }
-
-//        //Remove Nan points
-//        vector<int> index;
-//        it->model_pc->is_dense=false;
-//        pcl::removeNaNFromPointCloud(*(it->model_pc),*(it->model_pc),index);
-//        pcl::removeNaNFromPointCloud(*scene_pc,*scene_pc,index);
-
-//        //Statistical outlier removal
-//        statisticalOutlierRemoval(scene_pc,50,1.0);
-
-//        //euclidianClustering(scene_pc,0.01);
-
-////                 float leaf_size=0.002;
-////                 voxelGridFilter(scene_pc,leaf_size);
-////                 voxelGridFilter(it->model_pc,leaf_size);
-
-//        //Save scene point cloud for later HV
-//        it->scene_pc=scene_pc;
+        if(is_viz)
+        {
+            string model_str="model";
+            string scene_str="scene";
+            stringstream ss;
+            ss<<id;
+            model_str+=ss.str();
+            scene_str+=ss.str();
+            pcl::visualization::PointCloudColorHandlerRandom<pcl::PointXYZ> color(it->model_pc);
+            pcl::visualization::PointCloudColorHandlerCustom<pcl::PointXYZ> model_pc_color(it->model_pc,0,255,0);
+            v->addPointCloud(it->scene_pc,scene_str);
+            v->addPointCloud(it->model_pc,model_pc_color,model_str);
+            v->spin();
+        }
 
         //Coarse alignment
         icp.setRANSACOutlierRejectionThreshold(0.02);
@@ -973,14 +1156,15 @@ void rgbdDetector::icpPoseRefine(vector<ClusterData>& cluster_data,pcl::Iterativ
             ss<<id;
             model_str+=ss.str();
             scene_str+=ss.str();
-            pcl::visualization::PointCloudColorHandlerRandom<pcl::PointXYZ> color(it->model_pc);
+            pcl::visualization::PointCloudColorHandlerRandom<pcl::PointXYZ> color(it->model_pc);            
+            pcl::visualization::PointCloudColorHandlerCustom<pcl::PointXYZ> model_pc_color(it->model_pc,0,255,0);
             v->updatePointCloud(it->scene_pc,scene_str);
-            v->updatePointCloud(it->model_pc,color,model_str);
+            v->updatePointCloud(it->model_pc,model_pc_color,model_str);
             v->spin();
         }
 
         //Fine alignment 1
-        icp.setEuclideanFitnessEpsilon(1e-4);
+        icp.setEuclideanFitnessEpsilon(1e-6);
         icp.setRANSACOutlierRejectionThreshold(0.01);
         icp.setMaximumIterations(20);
         icp.setMaxCorrespondenceDistance(0.01);
@@ -1010,8 +1194,9 @@ void rgbdDetector::icpPoseRefine(vector<ClusterData>& cluster_data,pcl::Iterativ
             model_str+=ss.str();
             scene_str+=ss.str();
             pcl::visualization::PointCloudColorHandlerRandom<pcl::PointXYZ> color(it->model_pc);
+            pcl::visualization::PointCloudColorHandlerCustom<pcl::PointXYZ> model_pc_color(it->model_pc,0,255,0);
             v->updatePointCloud(it->scene_pc,scene_str);
-            v->updatePointCloud(it->model_pc,color,model_str);
+            v->updatePointCloud(it->model_pc,model_pc_color,model_str);
             v->spin();
         }
 
@@ -1087,7 +1272,7 @@ void rgbdDetector::voxelGridFilter(PointCloudXYZ::Ptr pts, float leaf_size)
     pcl::copyPointCloud(*pts_filtered,*pts);
 }
 
-void rgbdDetector::hypothesisVerification(vector<ClusterData>& cluster_data, float octree_res, float thresh)
+void rgbdDetector::hypothesisVerification(vector<ClusterData>& cluster_data, float octree_res, float thresh, bool is_viz)
 {
     vector<ClusterData>::iterator it =cluster_data.begin();
     for(;it!=cluster_data.end();)
@@ -1106,16 +1291,27 @@ void rgbdDetector::hypothesisVerification(vector<ClusterData>& cluster_data, flo
         }
         int model_pts=it->model_pc->points.size();
 
-//        pcl::visualization::PCLVisualizer v("check");
-//        pcl::visualization::PointCloudColorHandlerRandom<pcl::PointXYZ> color(it->model_pc);
-//        v.addPointCloud(it->scene_pc,"scene");
-//        v.addPointCloud(it->model_pc,color,"model");
-//        v.spin();
-//        v.close();
+        if(is_viz)
+        {
+            pcl::visualization::PCLVisualizer v("check");
+            pcl::visualization::PointCloudColorHandlerRandom<pcl::PointXYZ> color(it->model_pc);
+            v.addPointCloud(it->scene_pc,"scene");
+            v.addPointCloud(it->model_pc,color,"model");
+            v.spin();
+            v.close();
+        }
 
         double collision_rate = (double)count/(double)model_pts;
         if(collision_rate<thresh)
-            {
+        {
+//            if(it->matches.size()<15)
+//            {
+//                it=cluster_data.erase(it);
+//            }
+//            else
+//            {
+//                it++;
+//            }
             it=cluster_data.erase(it);
         }
         else
@@ -1127,13 +1323,13 @@ void rgbdDetector::hypothesisVerification(vector<ClusterData>& cluster_data, flo
 
 }
 
-void rgbdDetector::icpNonLinearPoseRefine(vector<ClusterData>& cluster_data,PointCloudXYZ::Ptr pc,IMAGE_WIDTH image_width,int bias_x)
+void rgbdDetector::icpNonLinearPoseRefine(vector<ClusterData>& cluster_data,PointCloudXYZ::Ptr pc,IMAGE_WIDTH image_width,int bias_x,cv::Rect mask_rect)
 {
     for(vector<ClusterData>::iterator it = cluster_data.begin();it!=cluster_data.end();++it)
     {
        //Get scene point cloud indices
         pcl::PointIndices::Ptr indices(new pcl::PointIndices);
-        indices=getPointCloudIndices(it,image_width,bias_x);
+        indices=getPointCloudIndices(it,image_width,bias_x,mask_rect);
        //Extract scene pc according to indices
         PointCloudXYZ::Ptr scene_pc(new PointCloudXYZ);
         extractPointsByIndices(indices,pc,scene_pc,false,false);
@@ -1223,15 +1419,19 @@ void rgbdDetector::icpNonLinearPoseRefine(vector<ClusterData>& cluster_data,Poin
 
 
 //Utility
-pcl::PointIndices::Ptr rgbdDetector::getPointCloudIndices(vector<ClusterData>::iterator& it, IMAGE_WIDTH image_width,int bias_x)
+pcl::PointIndices::Ptr rgbdDetector::getPointCloudIndices(vector<ClusterData>::iterator& it, IMAGE_WIDTH image_width,int bias_x,cv::Rect mask_rect)
 {
     int x_cropped=0;
     int y_cropped=0;
+    Mat cropped_mask=it->mask(mask_rect);
+    imshow("crop mask",cropped_mask);
+    imshow("uncrop mask",it->mask);
+    waitKey(0);
     pcl::PointIndices::Ptr indices(new pcl::PointIndices);
-    for(int i=0;i<it->mask.rows;++i)
+    for(int i=0;i<cropped_mask.rows;++i)
     {
-        const uchar* row_data=it->mask.ptr<uchar>(i);
-        for(int j=0;j<it->mask.cols;++j)
+        const uchar* row_data=cropped_mask.ptr<uchar>(i);
+        for(int j=0;j<cropped_mask.cols;++j)
         {
             //Notice: the coordinate of input params "rect" is w.r.t cropped image, so the offset is needed to transform coordinate
             if(row_data[j]>0)
