@@ -18,13 +18,12 @@ find_package(catkin REQUIRED COMPONENTS
   trac_ik_lib
   moveit_ros_planning_interface
 )
-# Use OpenCV 3.1.0.
+
 find_package (OpenCV 2 REQUIRED)
 find_package (PCL REQUIRED)
 find_package(orocos_kdl REQUIRED)
 
 # Set include dirs
-
 SET(default_INCLUDE_DIRS include/linemod_pose_estimation)
 
 ## System dependencies are found with CMake's conventions
@@ -151,8 +150,6 @@ include_directories(
 # add_dependencies(linemod_pose_estimation ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
 
 ## Declare a C++ executable
-# add_executable(linemod_pose_estimation_node src/linemod_pose_estimation_node.cpp)
-
 #--------Renderer--------#
 add_executable(linemod_renderer_node src/test_renderer.cpp)
 add_executable(linemod_image_renderer_node src/renderer_only_image.cpp)
