@@ -165,7 +165,7 @@ public:
 
     double depth_diff(Mat& depth_img,Mat& depth_template,cv::Mat& template_mask,cv::Rect& rect);
 
-    double normal_diff(cv::Mat& depth_img, Mat& depth_template, cv::Mat& template_mask, cv::Rect& rect, Matx33d &K_rgb);
+    double normal_diff(cv::Mat& depth_img, Mat& depth_template, cv::Mat& template_mask, Rect &template_mask_rect, cv::Rect& rect, Matx33d &K_rgb);
 
     double getClusterScore(const double& depth_diff_score,const double& normal_diff_score);
 

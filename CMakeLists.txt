@@ -23,9 +23,6 @@ find_package (OpenCV 2 REQUIRED)
 find_package (PCL REQUIRED)
 find_package(orocos_kdl REQUIRED)
 
-# Set include dirs
-SET(default_INCLUDE_DIRS include/linemod_pose_estimation)
-
 ## System dependencies are found with CMake's conventions
 # find_package(Boost REQUIRED COMPONENTS system)
 
@@ -156,15 +153,13 @@ add_executable(linemod_image_renderer_node src/renderer_only_image.cpp)
 add_executable(renderer_node src/renderer.cpp)
 
 #--------Detector--------#
-#add_executable(linemod_detect_node src/linemod_detect.cpp src/linemod_icp.cpp src/linemod_pointcloud.cpp)# src/db_linemod.cpp)
 add_executable(linemod_ensenso_detect_node src/linemod_ensenso_detect.cpp)
 add_executable(linemod_carmine_detect_node src/linemod_carmine_detect.cpp)
 #add_executable(linemod_dataset_detect_node src/linemod_dataset_detect.cpp src/linemod_icp.cpp src/linemod_pointcloud.cpp)
 #add_executable(picking_demo_node src/picking_demo.cpp src/linemod_icp.cpp src/linemod_pointcloud.cpp)
-#add_executable(test_pcl_visualizer src/test_pcl_visualizer.cpp)
+
 
 #--------Tool----------#
-#add_executable(depth_camera_to_rgb_camera_broadcaster src/depth_camera_to_rgb_camera_broadcaster.cpp)
 add_executable(display_utility src/display_utility.cpp)
 
 ## Add cmake target dependencies of the executable
@@ -172,10 +167,6 @@ add_executable(display_utility src/display_utility.cpp)
 # add_dependencies(linemod_pose_estimation_node ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
 
 ## Specify libraries to link a library or executable target against
-# target_link_libraries(linemod_pose_estimation_node
-#   ${catkin_LIBRARIES}
-# )
-
 target_link_libraries(linemod_renderer_node
   ${catkin_LIBRARIES}
   ${OpenCV_LIBRARIES}
@@ -193,18 +184,6 @@ target_link_libraries(linemod_image_renderer_node
   ${OpenCV_LIBRARIES}
   ${object_recognition_renderer_LIBRARIES}
 )
-
-#target_link_libraries(linemod_split_renderer_node
-#  ${catkin_LIBRARIES}
-#  ${OpenCV_LIBRARIES}
-#  ${object_recognition_renderer_LIBRARIES}
-#)
-
-#target_link_libraries(linemod_detect_node
-#  ${catkin_LIBRARIES}
-#  ${OpenCV_LIBRARIES}
-#  rgbdDetector
-#)
 
 target_link_libraries(linemod_ensenso_detect_node
   ${catkin_LIBRARIES}
@@ -241,32 +220,10 @@ target_link_libraries(rgbdDetector
   ${PCL_LIBRARIES}
 )
 
-#target_link_libraries(depth_camera_to_rgb_camera_broadcaster
-#  ${catkin_LIBRARIES}
-#)
-
 target_link_libraries(display_utility
   ${OpenCV_LIBRARIES}
   ${PCL_LIBRARIES}
 )
-
-#target_link_libraries(test_pcl_visualizer
-#  ${PCL_LIBRARIES}
-#)
-
-
-#target_link_libraries(linemod_detect_modified_node
-#  ${catkin_LIBRARIES}
-#  ${OpenCV_LIBRARIES}
-#  libcv_bridge3.so
-#)
-
-#target_link_libraries(linemod_demo_node
-#  ${catkin_LIBRARIES}
-#  ${OpenCV_LIBRARIES}
-#  libcv_bridge3.so
-#)
-
 
 
 #############

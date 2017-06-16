@@ -673,27 +673,6 @@ public:
         is_K_read=true;
     }
 
-    void alignment_test(PointCloudXYZ::Ptr pc, Mat img)
-    {
-        pcl::PointCloud<pcl::PointXYZRGB>::Ptr pcRgb_ptr(new pcl::PointCloud<pcl::PointXYZRGB>);
-        pcl::copyPointCloud(*pc,*pcRgb_ptr);
-
-        for(int i=0;i<pcRgb_ptr->height;++i)
-        {
-            for(int j=0;j<pcRgb_ptr->width;++j)
-            {
-                pcRgb_ptr->at(j,i).r=img.at<cv::Vec3b>(i,j)[2];
-                pcRgb_ptr->at(j,i).g=img.at<cv::Vec3b>(i,j)[1];
-                pcRgb_ptr->at(j,i).b=img.at<cv::Vec3b>(i,j)[0];
-            }
-        }
-
-        sensor_msgs::PointCloud2 pc_rgb_msg;
-        pcl::toROSMsg(*pcRgb_ptr,pc_rgb_msg);
-        pc_rgb_pub_.publish(pc_rgb_msg);
-        return;
-    }
-
     bool pc2depth(PointCloudXYZ::ConstPtr pc,Mat& mat_depth)
     {
         //Convert point cloud to depth image

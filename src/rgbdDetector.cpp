@@ -147,22 +147,22 @@ double rgbdDetector::depth_normal_diff_calc(RendererIterator *renderer_iterator_
      {
         //get mask during rendering
         //get the pose
-        cv::Matx33d R_match = Rs_[it_match->template_id].clone();// rotation of the object w.r.t to the view point
-        cv::Vec3d T_match = Ts_[it_match->template_id].clone();//the translation of the camera with respect to the current view point
+        cv::Matx33d R_match = Rs_[it_match->template_id].clone();// rotation of the object w.r.t to camera
+        cv::Vec3d T_match = Ts_[it_match->template_id].clone();//negative position of the camera with respect to object
 
         //get the point cloud of the rendered object model
         cv::Mat template_mask,flip_template_mask;
         cv::Rect mask_rect,flip_mask_rect;
         cv::Matx33d R_temp(R_match.inv());//rotation of the viewpoint w.r.t the object
-        cv::Vec3d up(-R_temp(0,1), -R_temp(1,1), -R_temp(2,1));//the negative direction of y axis of viewpoint w.r.t object frame
+        cv::Vec3d up(-R_temp(0,1), -R_temp(1,1), -R_temp(2,1));//up vector (negative y axis)
         cv::Mat depth_template,flip_depth_template;
-        renderer_iterator_->renderDepthOnly(depth_template,template_mask, mask_rect, -T_match, up);//up?
+        renderer_iterator_->renderDepthOnly(depth_template,template_mask, mask_rect, -T_match, up);//
         mask_rect.x = it_match->x;
         mask_rect.y = it_match->y;
         cv::flip(template_mask,flip_template_mask,0);
         cv::flip(depth_template,flip_depth_template,0);
-        cv::imshow("flip template mask",flip_template_mask);
-        cv::waitKey(0);
+//        cv::imshow("flip template mask",flip_template_mask);
+//        cv::waitKey(0);
 
         //Template mask rect
         //Save rect
@@ -216,7 +216,10 @@ double rgbdDetector::depth_normal_diff_calc(RendererIterator *renderer_iterator_
         sum_depth_diff+=depth_diff(depth_img,flip_depth_template_crop,flip_template_mask_crop,flip_mask_rect);
 
         //Compute normal diff for each match
-        sum_normal_diff+=normal_diff(depth_img,flip_depth_template_crop,flip_template_mask_crop,flip_mask_rect,K_rgb);
+        cv::Rect flip_template_mask_rect = flip_mask_rect;
+        flip_template_mask_rect.y = min_y;
+        flip_template_mask_rect.x = min_x;
+        sum_normal_diff+=normal_diff(depth_img,flip_depth_template,flip_template_mask_crop,flip_template_mask_rect,flip_mask_rect,K_rgb);
     }
     sum_depth_diff=sum_depth_diff/match_cluster.size();
     sum_normal_diff=sum_normal_diff/match_cluster.size();
@@ -238,8 +241,8 @@ double rgbdDetector::depth_diff(Mat& depth_img,Mat& depth_template,cv::Mat& temp
     cv::imshow("template mask",template_mask);
     cv::imshow("template mask2",template_mask2);
     cv::imshow("depth_mask",depth_mask);
-    cv::imshow("bitwise_mask",mask);
-    cv::waitKey(0);
+//    cv::imshow("bitwise_mask",mask);
+//    cv::waitKey(0);
 
     //Perform subtraction and accumulate differences
     //-------- Method A for computing depth diff----//
@@ -274,14 +277,14 @@ double rgbdDetector::depth_diff(Mat& depth_img,Mat& depth_template,cv::Mat& temp
     return sum;
 }
 
-double rgbdDetector::normal_diff(cv::Mat& depth_img,Mat& depth_template,cv::Mat& template_mask,cv::Rect& rect,Matx33d& K_rgb)
+double rgbdDetector::normal_diff(cv::Mat& depth_img,Mat& depth_template,cv::Mat& template_mask,cv::Rect& template_mask_rect, cv::Rect& rect,Matx33d& K_rgb)
 {
     //Convert ROI into a mask. NaN point of depth image will become zero in mask image
     Mat depth_roi=depth_img(rect);
     Mat depth_mask;
-    //depth_roi.convertTo(depth_mask,CV_8UC1,1,0);
-    depth_mask=Mat::zeros(depth_img.rows,depth_img.cols,CV_8UC1);
-    depth_mask(rect)=255;
+    depth_roi.convertTo(depth_mask,CV_8UC1,1,0);
+//    depth_mask=Mat::zeros(depth_img.rows,depth_img.cols,CV_8UC1);
+//    depth_mask(rect)=255;
     //And operation. Only valid points in both images will be considered.
     Mat mask;
     bitwise_and(template_mask,depth_mask,mask);
@@ -294,8 +297,9 @@ double rgbdDetector::normal_diff(cv::Mat& depth_img,Mat& depth_template,cv::Mat&
 
     //Normal estimation for template depth image
    RgbdNormals template_normal_est(depth_template.rows,depth_template.cols,CV_32F,K_rgb,7,RgbdNormals::RGBD_NORMALS_METHOD_LINEMOD);
-   Mat template_normal;
+   Mat template_normal,roi_template_normal;
    template_normal_est(depth_template,template_normal);
+   roi_template_normal = template_normal(template_mask_rect);
 
    //Normal Estimation for roi depth image
    RgbdNormals roi_normal_est(depth_img.rows,depth_img.cols,CV_32F,K_rgb,7,RgbdNormals::RGBD_NORMALS_METHOD_LINEMOD);
@@ -305,7 +309,7 @@ double rgbdDetector::normal_diff(cv::Mat& depth_img,Mat& depth_template,cv::Mat&
 
 
    //Compute normal diff
-   Mat subtraction=depth_img_normal-template_normal;
+   Mat subtraction=roi_normal-roi_template_normal;
    MatIterator_<uchar> it_mask=mask.begin<uchar>();
    MatIterator_<Vec3d> it_subs=subtraction.begin<Vec3d>();
    double sum=0.0;
@@ -332,12 +336,12 @@ double rgbdDetector::normal_diff(cv::Mat& depth_img,Mat& depth_template,cv::Mat&
        {
            if(mask.at<uchar>(i,j)>0)
            {
-               cv::Vec3f template_normal_vec_cv = template_normal.at<Vec3f>(i,j);
-               cv::Vec3f roi_normal_vec_cv = depth_img_normal.at<Vec3f>(i,j);
+               cv::Vec3f template_normal_vec_cv = roi_template_normal.at<Vec3f>(i,j);
+               cv::Vec3f roi_normal_vec_cv = roi_normal.at<Vec3f>(i,j);
                if(abs(cv::norm(template_normal_vec_cv)-1.0)<0.0001 && abs(cv::norm(roi_normal_vec_cv)-1.0)<0.0001)
                {
-                   Eigen::Vector4f model_normal_vec((float)template_normal.at<Vec3f>(i,j)[0],(float)template_normal.at<Vec3f>(i,j)[1],(float)template_normal.at<Vec3f>(i,j)[2],0.0);
-                   Eigen::Vector4f roi_normal_vec((float)depth_img_normal.at<Vec3f>(i,j)[0],(float)depth_img_normal.at<Vec3f>(i,j)[1],(float)depth_img_normal.at<Vec3f>(i,j)[2],0.0);
+                   Eigen::Vector4f model_normal_vec((float)roi_template_normal.at<Vec3f>(i,j)[0],(float)roi_template_normal.at<Vec3f>(i,j)[1],(float)roi_template_normal.at<Vec3f>(i,j)[2],0.0);
+                   Eigen::Vector4f roi_normal_vec((float)roi_normal.at<Vec3f>(i,j)[0],(float)roi_normal.at<Vec3f>(i,j)[1],(float)roi_normal.at<Vec3f>(i,j)[2],0.0);
                    sum+=pcl::getAngle3D(model_normal_vec,roi_normal_vec);
                    num++;
                }
@@ -714,9 +718,9 @@ void rgbdDetector::getRoughPoseByClustering(vector<ClusterData>& cluster_data,Po
         cv::flip(depth_render,flip_depth_render,0);
         cv::flip(mask,flip_mask,0);
 //        imshow("flip_mask oupt",flip_mask);
-       imshow("mask output",mask);
-       imshow("rgb image output", image_render);
-       waitKey(0);
+//       imshow("mask output",mask);
+//       imshow("rgb image output", image_render);
+//       waitKey(0);
 
         //Save mask
         it->mask=flip_mask;
@@ -810,13 +814,13 @@ void rgbdDetector::getRoughPoseByClustering(vector<ClusterData>& cluster_data,Po
         extractPointsByIndices(indices,pc,scene_pc,false,false);
 
         //Viz for test
-        pcl::visualization::PCLVisualizer view("v");
-        pcl::visualization::PointCloudColorHandlerCustom<pcl::PointXYZ> model_pc_color(it->model_pc,0,255,0);
-        view.addPointCloud(it->model_pc,model_pc_color,"model");
-        view.addPointCloud(scene_pc,"scene");
-        Eigen::Affine3f obj_pose_f=it->pose.cast<float>();
-        view.addCoordinateSystem(0.08,obj_pose_f);
-        view.spin();
+//        pcl::visualization::PCLVisualizer view("v");
+//        pcl::visualization::PointCloudColorHandlerCustom<pcl::PointXYZ> model_pc_color(it->model_pc,0,255,0);
+//        view.addPointCloud(it->model_pc,model_pc_color,"model");
+//        view.addPointCloud(scene_pc,"scene");
+//        Eigen::Affine3f obj_pose_f=it->pose.cast<float>();
+//        view.addCoordinateSystem(0.08,obj_pose_f);
+//        view.spin();
 
         //Remove Nan points
         vector<int> index;
