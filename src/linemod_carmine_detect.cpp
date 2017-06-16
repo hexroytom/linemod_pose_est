@@ -17,9 +17,6 @@
 #include <message_filters/subscriber.h>
 
 //ork
-#include "linemod_icp.h"
-#include "linemod_pointcloud.h"
-#include "db_linemod.h"
 #include <object_recognition_renderer/renderer3d.h>
 #include <object_recognition_renderer/utils.h>
 //#include <object_recognition_core/common/pose_result.h>
@@ -375,7 +372,7 @@ public:
 
 
             //Filter based on size of clusters
-            uchar thresh=1;
+            uchar thresh=0;
             t=cv::getTickCount ();
             rgbd_detector.cluster_filter(map_match,thresh);
             t=(cv::getTickCount ()-t)/cv::getTickFrequency ();
@@ -391,7 +388,7 @@ public:
                     rectangle(cluster_filter_img,rect_tmp,color,2);
                 }
             }
-//            imshow("cluster filtered",cluster_filter_img);
+            imshow("cluster filtered",cluster_filter_img);
 //            cv::waitKey (0);
 
             //Use match similarity score as evaluation
@@ -408,13 +405,17 @@ public:
 
             //Non-maxima suppression
             t=cv::getTickCount ();
-            rgbd_detector.nonMaximaSuppression(cluster_data,nms_radius,Rects_,map_match);
+            rgbd_detector.nonMaximaSuppressionUsingIOU(cluster_data,nms_radius,Rects_,map_match);
             t=(cv::getTickCount ()-t)/cv::getTickFrequency ();
             cout<<"Time consumed by non-maxima suppression: "<<t<<endl;
             //Display
             for(vector<ClusterData>::iterator iter=cluster_data.begin();iter!=cluster_data.end();++iter)
             {
-                rectangle(nms_img,iter->rect,Scalar(0,0,255),2);
+              for(std::vector<linemod::Match>::iterator it= iter->matches.begin();it != iter->matches.end();it++)
+              {
+                  std::vector<cv::linemod::Template> templates=detector->getTemplates(it->class_id, it->template_id);
+                  drawResponse(templates, 1, nms_img,cv::Point(it->x,it->y), 2);
+              }
             }
             imshow("Non-maxima suppression",nms_img);
             cv::waitKey (0);
@@ -422,7 +423,7 @@ public:
 
             //Pose average
             t=cv::getTickCount ();
-            rgbd_detector.getRoughPoseByClustering(cluster_data,pc_ptr,Rs_,Ts_,Distances_,Obj_origin_dists,orientation_clustering_th_,renderer_iterator_,renderer_focal_length_x,renderer_focal_length_y,image_width,bias_x,orient_modifying_matrix);
+            rgbd_detector.getRoughPoseByClustering(cluster_data,pc_ptr,Rs_,Ts_,Distances_,Obj_origin_dists,orientation_clustering_th_,renderer_iterator_,renderer_focal_length_x,renderer_focal_length_y,image_width,bias_x);
             t=(cv::getTickCount ()-t)/cv::getTickFrequency ();
             cout<<"Time consumed by rough pose estimation : "<<t<<endl;
             //vizResultPclViewer(cluster_data,pc_ptr);
@@ -446,13 +447,15 @@ public:
                 rectangle(final,cluster_data[ii].rect,Scalar(0,0,255),2);
             }
 
-            templateRefinement(cluster_data[0],pc_ptr);
+            for(int i=0;i<cluster_data.size();++i)
+            {
+              templateRefinement(cluster_data[i],pc_ptr);
+            }
 
-            //Viz            
+            //Viz
+            vizResultPclViewer(cluster_data,pc_ptr);           
             imshow("final result",final);
             cv::waitKey (0);
-
-            vizResultPclViewer(cluster_data,pc_ptr);
 
         }
 
@@ -506,7 +509,7 @@ public:
 
             //ICP refine using new point cloud
             //Coarse alignment
-            icp.setMaxCorrespondenceDistance(0.02);
+            icp.setMaxCorrespondenceDistance(0.05);
             icp.setEuclideanFitnessEpsilon(1e-6);
             icp.setMaximumIterations(50);
             icp.setRANSACOutlierRejectionThreshold(0.01);
@@ -533,17 +536,21 @@ public:
             object.pose=tf*object.pose;
 
             //Viz
-            pcl::visualization::PCLVisualizer v("template refinment");
+            pcl::visualization::PCLVisualizer v("after template refinment");
+            pcl::visualization::PCLVisualizer v2("before template refinment");
             pcl::visualization::PointCloudColorHandlerCustom<pcl::PointXYZ> refined_model_pc_color(refined_model_pc,0,255,0);
             pcl::visualization::PointCloudColorHandlerCustom<pcl::PointXYZ> model_pc_color(origin_model_pc,255,0,0);
 
-            v.addPointCloud(refined_model_pc,refined_model_pc_color,"refined model");
-            //v.addPointCloud(origin_model_pc,model_pc_color,"model");
-            v.addPointCloud(pc_ptr);
-            v.addCoordinateSystem();
-            v.addCoordinateSystem(0.12,origin_object_pose.cast<float>());
-            v.addCoordinateSystem(0.08,object.pose.cast<float>());
-            v.spin();
+//            v.addPointCloud(refined_model_pc,refined_model_pc_color,"refined model");
+//            //v.addPointCloud(origin_model_pc,model_pc_color,"model");
+//            v.addPointCloud(pc_ptr);
+//            v.addCoordinateSystem(0.2,object.pose.cast<float>());
+//            v.spinOnce();
+
+//            v2.addPointCloud(pc_ptr);
+//            v2.addCoordinateSystem(0.2,origin_object_pose.cast<float>());
+//            v2.addPointCloud(origin_model_pc,model_pc_color,"model");
+//            v2.spin();
 
             object.model_pc = refined_model_pc;
 

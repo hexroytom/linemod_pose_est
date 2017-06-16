@@ -12,9 +12,6 @@
 #include <message_filters/subscriber.h>
 
 //ork
-#include "linemod_icp.h"
-#include "linemod_pointcloud.h"
-#include "db_linemod.h"
 #include <object_recognition_renderer/renderer3d.h>
 #include <object_recognition_renderer/utils.h>
 
@@ -137,10 +134,6 @@ public:
     float icp_dist_min_;
     float orientation_clustering_th_;
 
-    LinemodPointcloud *pci_real_icpin_ref;
-    LinemodPointcloud *pci_real_icpin_model;
-    LinemodPointcloud *pci_real_nonICP_model;
-    LinemodPointcloud *pci_real_condition_filter_model;
     std::string depth_frame_id_;
 
     pcl::IterativeClosestPoint<pcl::PointXYZ, pcl::PointXYZ> icp;
@@ -178,16 +171,9 @@ public:
         image_width(rgbdDetector::ENSENSO),
         clustering_step_(clustering_step)
     {
-        //Publisher
-        //pub_color_=it.advertise ("/sync_rgb",2);
-        //pub_depth=it.advertise ("/sync_depth",2);
         pc_rgb_pub_=nh.advertise<sensor_msgs::PointCloud2>("ensenso_rgb_pc",1);
         extract_pc_pub = nh.advertise<sensor_msgs::PointCloud2>("/render_pc",1);
 
-        //the intrinsic matrix
-        //sub_cam_info=nh.subscribe("/camera/depth/camera_info",1,&linemod_detect::read_cam_info,this);
-
-        //ork default param
         threshold=detect_score_threshold;
 
         //read the saved linemod detecor
@@ -210,12 +196,6 @@ public:
         renderer_iterator_->radius_min_ = float(renderer_radius_min);
         renderer_iterator_->radius_max_ = float(renderer_radius_max);
         renderer_iterator_->radius_step_ = float(renderer_radius_step);
-
-        pci_real_icpin_model = new LinemodPointcloud(nh, "real_icpin_model", depth_frame_id_);
-        pci_real_icpin_ref = new LinemodPointcloud(nh, "real_icpin_ref", depth_frame_id_);
-        pci_real_condition_filter_model=new LinemodPointcloud(nh, "real_condition_filter", depth_frame_id_);
-        //pci_real_nonICP_model= new LinemodPointcloud(nh, "real_nonICP_model", depth_frame_id_);
-        //pci_real_1stICP_model= new LinemodPointcloud(nh, "real_1stICP_model", depth_frame_id_);
 
         icp.setMaximumIterations (icp_max_iter);
         icp.setMaxCorrespondenceDistance (icp_maxCorresDist);
@@ -314,17 +294,17 @@ public:
         t=(cv::getTickCount ()-t)/cv::getTickFrequency ();
 
         //Display all the results
-        for(std::vector<linemod::Match>::iterator it= matches.begin();it != matches.end();it++){
-            std::vector<cv::linemod::Template> templates=detector->getTemplates(it->class_id, it->template_id);
-            drawResponse(templates, 1, initial_img,cv::Point(it->x,it->y), 2);
-        }
-//        for(std::vector<linemod::Match>::iterator it= matches.begin();it != matches.end();it++)
-//        {
-//            cv::Rect rect_tmp= Rects_[it->template_id];
-//            rect_tmp.x=it->x;
-//            rect_tmp.y=it->y;
-//            rectangle(initial_img,rect_tmp,Scalar(0,0,255),1);
+//        for(std::vector<linemod::Match>::iterator it= matches.begin();it != matches.end();it++){
+//            std::vector<cv::linemod::Template> templates=detector->getTemplates(it->class_id, it->template_id);
+//            drawResponse(templates, 1, initial_img,cv::Point(it->x,it->y), 2);
 //        }
+        for(std::vector<linemod::Match>::iterator it= matches.begin();it != matches.end();it++)
+        {
+            cv::Rect rect_tmp= Rects_[it->template_id];
+            rect_tmp.x=it->x;
+            rect_tmp.y=it->y;
+            rectangle(initial_img,rect_tmp,Scalar(0,0,255),1);
+        }
         Mat gray_initial_img,mat_gray_crop;
         cvtColor(initial_img,gray_initial_img,COLOR_BGR2GRAY);
         cvtColor(mat_rgb_crop,mat_gray_crop,COLOR_BGR2GRAY);
@@ -351,9 +331,8 @@ public:
         imshow("cluster",cluster_img);
         cv::waitKey (1);
 
-
         //Filter based on size of clusters
-        uchar thresh=1;
+        uchar thresh=3;
         rgbd_detector.cluster_filter(map_match,thresh);
         for(std::map<std::vector<int>, std::vector<linemod::Match> >::iterator it= map_match.begin();it != map_match.end();it++)
         {
@@ -377,28 +356,30 @@ public:
                                        0.0, 824.88983154296875, 231.932891845703125,
                                        0.0, 0.0, 1.0);
         Mat depth_tmp=mat_depth.clone();
-        //rgbd_detector.cluster_scoring(renderer_iterator_,K_tmp,Rs_,Ts_,map_match,depth_tmp,cluster_data);
-        rgbd_detector.cluster_scoring(map_match,mat_depth,cluster_data);
+        rgbd_detector.cluster_scoring(renderer_iterator_,K_tmp,Rs_,Ts_,map_match,depth_tmp,cluster_data);
+        //rgbd_detector.cluster_scoring(map_match,mat_depth,cluster_data);
         t=(cv::getTickCount ()-t)/cv::getTickFrequency ();
         cout<<"Time consumed by scroing: "<<t<<endl;
 
         //Non-maxima suppression
         rgbd_detector.nonMaximaSuppression(cluster_data,nms_radius,Rects_,map_match);
-//        for(int i=0;i<cluster_data.size();++i)
-//            {
-//            rectangle(nms_img,cluster_data[i].rect,Scalar(0,0,255),2);
-//        }
-        for(vector<ClusterData>::iterator it_c = cluster_data.begin();it_c != cluster_data.end();++it_c)
+        //rgbd_detector.nonMaximaSuppressionUsingIOU(cluster_data,nms_radius,Rects_,map_match);
+        for(int i=0;i<cluster_data.size();++i)
         {
-            vector<linemod::Match> matches_tmp = it_c->matches;
-            for(std::vector<linemod::Match>::iterator it= matches_tmp.begin();it != matches_tmp.end();it++)
-            {
-                std::vector<cv::linemod::Template> templates=detector->getTemplates(it->class_id, it->template_id);
-                drawResponse(templates, 1, nms_img,cv::Point(it->x,it->y), 2);
-            }
+          Scalar color_(rng.uniform(0,255),rng.uniform(0,255),rng.uniform(0,255));
+          rectangle(nms_img,cluster_data[i].rect,color_,2);
         }
-        Mat gray_nms_img;
-        cvtColor(nms_img,gray_nms_img,COLOR_BGR2GRAY);
+//        for(vector<ClusterData>::iterator it_c = cluster_data.begin();it_c != cluster_data.end();++it_c)
+//        {
+//            vector<linemod::Match> matches_tmp = it_c->matches;
+//            for(std::vector<linemod::Match>::iterator it= matches_tmp.begin();it != matches_tmp.end();it++)
+//            {
+//                std::vector<cv::linemod::Template> templates=detector->getTemplates(it->class_id, it->template_id);
+//                drawResponse(templates, 1, nms_img,cv::Point(it->x,it->y), 2);
+//            }
+//        }
+//        Mat gray_nms_img;
+//        cvtColor(nms_img,gray_nms_img,COLOR_BGR2GRAY);
         imshow("nms",nms_img);
         cv::waitKey (0);
 
@@ -448,8 +429,8 @@ public:
 //        }
 
         for(int i=0;i<cluster_data.size();++i)
-            {
-            rectangle(final,cluster_data[i].rect,Scalar(0,0,255),2);
+        {
+          rectangle(final,cluster_data[i].rect,Scalar(0,0,255),2);
         }
         imshow("display",final);
         cv::waitKey (0);
@@ -816,25 +797,25 @@ int main(int argc,char** argv)
     srv.request.is_rgb=true;
     ros::Rate loop(1);
 
-//    string img_path=argv[12];
-//    string pc_path=argv[13];
-//    ros::Time now =ros::Time::now();
-//    Mat cv_img=imread(img_path,IMREAD_COLOR);
-//    cv_bridge::CvImagePtr bridge_img_ptr(new cv_bridge::CvImage);
-//    bridge_img_ptr->image=cv_img;
-//    bridge_img_ptr->encoding="bgr8";
-//    bridge_img_ptr->header.stamp=now;
-//    srv.response.image = *bridge_img_ptr->toImageMsg();
+    string img_path=argv[12];
+    string pc_path=argv[13];
+    ros::Time now =ros::Time::now();
+    Mat cv_img=imread(img_path,IMREAD_COLOR);
+    cv_bridge::CvImagePtr bridge_img_ptr(new cv_bridge::CvImage);
+    bridge_img_ptr->image=cv_img;
+    bridge_img_ptr->encoding="bgr8";
+    bridge_img_ptr->header.stamp=now;
+    srv.response.image = *bridge_img_ptr->toImageMsg();
 
-//    PointCloudXYZ::Ptr pc(new PointCloudXYZ);
-//    pcl::io::loadPCDFile(pc_path,*pc);
-//    pcl::toROSMsg(*pc,srv.response.pointcloud);
-//    srv.response.pointcloud.header.frame_id="/camera_link";
-//    srv.response.pointcloud.header.stamp=now;
+    PointCloudXYZ::Ptr pc(new PointCloudXYZ);
+    pcl::io::loadPCDFile(pc_path,*pc);
+    pcl::toROSMsg(*pc,srv.response.pointcloud);
+    srv.response.pointcloud.header.frame_id="/camera_link";
+    srv.response.pointcloud.header.stamp=now;
 
     while(ros::ok())
     {
-        detector.getImages(srv);
+        //detector.getImages(srv);
         detector.detect_cb(srv.response.image,srv.response.pointcloud,srv.request.is_rgb);
         loop.sleep();
     }

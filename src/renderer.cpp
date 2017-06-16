@@ -204,9 +204,9 @@ int main(int argc,char** argv)
     if(argc<10)
         {
         renderer_n_points_ = 150;
-        renderer_angle_step_ = 10;
-        renderer_radius_min_ = 0.7;
-        renderer_radius_max_ = 0.8;
+        renderer_angle_step_ = 3;
+        renderer_radius_min_ = 0.6;
+        renderer_radius_max_ = 0.7;
         renderer_radius_step_ = 0.1;
         renderer_width_ = 640; //ensenso 752
         renderer_height_ = 480;
@@ -214,13 +214,13 @@ int main(int argc,char** argv)
         renderer_far_ = 1000.0;
         renderer_focal_length_x_ = 535.566011;//Kinect ;//carmine 535.566011; //dataset 571.9737
         renderer_focal_length_y_ = 537.168115;//Kinect //carmine 537.168115;  //dataset 571.0073
-        stl_file="/home/yake/catkin_ws/src/linemod_pose_est/config/stl/triangle_board.STL";
-        template_output_path="/home/yake/catkin_ws/src/linemod_pose_est/config/data/triangle_board_linemod_carmine_templates.yml";
-        renderer_params_output_path="/home/yake/catkin_ws/src/linemod_pose_est/config/data/triangle_board_linemod_carmine_renderer_params.yml";
+        stl_file="/home/yake/catkin_ws/src/linemod_pose_est/config/stl/rectangle_board.STL";
+        template_output_path="/home/yake/catkin_ws/src/linemod_pose_est/config/data/rectangle_board_linemod_carmine_templates.yml";
+        renderer_params_output_path="/home/yake/catkin_ws/src/linemod_pose_est/config/data/rectangle_board_linemod_carmine_renderer_params.yml";
         ply_file_path="/home/yake/catkin_ws/src/linemod_pose_est/config/stl/triangle_board.ply";
 
     }else{
-     renderer_n_points_ = 150;
+     renderer_n_points_ = 300;
      renderer_angle_step_ = 10;
      renderer_radius_min_ = atof(argv[8]);
      renderer_radius_max_ = atof(argv[9]);

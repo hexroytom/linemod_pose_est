@@ -115,9 +115,9 @@ void rgbdDetector::cluster_scoring(RendererIterator *renderer_iterator_,Matx33d&
     for(;it_map!=map_match.end();++it_map)
     {
         //Perform depth difference computation and normal difference computation
-        //double score=depth_normal_diff_calc(renderer_iterator_,K_rgb,Rs_,Ts_,it_map->second,depth_img);
+        double score=depth_normal_diff_calc(renderer_iterator_,K_rgb,Rs_,Ts_,it_map->second,depth_img);
         //Options: similairy score computation
-        double score=similarity_score_calc(it_map->second);
+        //double score=similarity_score_calc(it_map->second);
         cluster_data.push_back(ClusterData(it_map->first,score));
 
     }
@@ -151,22 +151,72 @@ double rgbdDetector::depth_normal_diff_calc(RendererIterator *renderer_iterator_
         cv::Vec3d T_match = Ts_[it_match->template_id].clone();//the translation of the camera with respect to the current view point
 
         //get the point cloud of the rendered object model
-        cv::Mat template_mask;
-        cv::Rect rect;
+        cv::Mat template_mask,flip_template_mask;
+        cv::Rect mask_rect,flip_mask_rect;
         cv::Matx33d R_temp(R_match.inv());//rotation of the viewpoint w.r.t the object
         cv::Vec3d up(-R_temp(0,1), -R_temp(1,1), -R_temp(2,1));//the negative direction of y axis of viewpoint w.r.t object frame
-        cv::Mat depth_template;
-        renderer_iterator_->renderDepthOnly(depth_template,template_mask, rect, -T_match, up);//up?
-        rect.x = it_match->x;
-        rect.y = it_match->y;
-        cv::imshow("scoring",template_mask);
+        cv::Mat depth_template,flip_depth_template;
+        renderer_iterator_->renderDepthOnly(depth_template,template_mask, mask_rect, -T_match, up);//up?
+        mask_rect.x = it_match->x;
+        mask_rect.y = it_match->y;
+        cv::flip(template_mask,flip_template_mask,0);
+        cv::flip(depth_template,flip_depth_template,0);
+        cv::imshow("flip template mask",flip_template_mask);
         cv::waitKey(0);
 
+        //Template mask rect
+        //Save rect
+        int min_x=0;
+        int min_y=0;
+
+        //Search min y
+        for(int i=0;i<flip_template_mask.rows;++i)
+        {
+          bool found_min_y=false;
+          for(int j=0;j<flip_template_mask.cols;++j)
+          {
+            if(flip_template_mask.at<uchar>(i,j) == 255)
+              {
+                min_y=i;
+                found_min_y=true;
+                break;
+              }
+          }
+          if(found_min_y)
+            break;
+        }
+
+        //Search min x
+        for(int j =0;j<flip_template_mask.cols;++j)
+        {
+          bool found_min_x=false;
+          for(int i =0;i<flip_template_mask.rows;++i)
+          {
+            if(flip_template_mask.at<uchar>(i,j) == 255)
+            {
+              min_x=j;
+              found_min_x=true;
+              break;
+            }
+
+          }
+          if(found_min_x)
+          {
+            break;
+          }
+        }
+        flip_mask_rect=mask_rect;
+        flip_mask_rect.y = min_y;
+        flip_mask_rect.x = min_x;
+        Mat flip_template_mask_crop = flip_template_mask(flip_mask_rect);
+        Mat flip_depth_template_crop = flip_depth_template(flip_mask_rect);
         //Compute depth diff for each match
-        sum_depth_diff+=depth_diff(depth_img,depth_template,template_mask,rect);
+        flip_mask_rect.y = it_match->y;
+        flip_mask_rect.x = it_match->x;
+        sum_depth_diff+=depth_diff(depth_img,flip_depth_template_crop,flip_template_mask_crop,flip_mask_rect);
 
         //Compute normal diff for each match
-        sum_normal_diff+=normal_diff(depth_img,depth_template,template_mask,rect,K_rgb);
+        sum_normal_diff+=normal_diff(depth_img,flip_depth_template_crop,flip_template_mask_crop,flip_mask_rect,K_rgb);
     }
     sum_depth_diff=sum_depth_diff/match_cluster.size();
     sum_normal_diff=sum_normal_diff/match_cluster.size();
@@ -179,21 +229,23 @@ double rgbdDetector::depth_diff(Mat& depth_img,Mat& depth_template,cv::Mat& temp
     //Crop ROI in depth image according to the rect
     Mat depth_roi=depth_img(rect);
     //Convert ROI into a mask. NaN point of depth image will become zero in mask image
-    Mat depth_mask;
-    //depth_roi.convertTo(depth_mask,CV_8UC1,1,0);
-    depth_mask=Mat::zeros(depth_img.rows,depth_img.cols,CV_8UC1);
-    depth_mask(rect)=255;
+    Mat depth_mask,template_mask2;
+    depth_roi.convertTo(depth_mask,CV_8UC1,1,0);
+    depth_template.convertTo(template_mask2,CV_8UC1);
     //And operation. Only valid points in both images will be considered.
     Mat mask;
     bitwise_and(template_mask,depth_mask,mask);
     cv::imshow("template mask",template_mask);
+    cv::imshow("template mask2",template_mask2);
     cv::imshow("depth_mask",depth_mask);
+    cv::imshow("bitwise_mask",mask);
     cv::waitKey(0);
 
     //Perform subtraction and accumulate differences
     //-------- Method A for computing depth diff----//
-    Mat subtraction(depth_template.size(),CV_16SC1);
-    subtraction=depth_template-depth_img;
+    Mat subtraction(depth_roi.size(),CV_16SC1);
+    subtraction=depth_template-depth_roi;
+    cout<<subtraction<<endl;
     MatIterator_<uchar> it_mask=mask.begin<uchar>();
     MatIterator_<short> it_subs=subtraction.begin<short>();
     double sum=0.0;
@@ -203,6 +255,7 @@ double rgbdDetector::depth_diff(Mat& depth_img,Mat& depth_template,cv::Mat& temp
         if(*it_mask>0)
         {
             //sum=sum+(double)(1/(abs(*it_subs)+1));
+          cout<<"subtraction "<<*it_subs<<endl;
             sum=sum+(double)(abs(*it_subs));
             num++;
         }
@@ -314,7 +367,6 @@ void rgbdDetector::nonMaximaSuppression(vector<ClusterData>& cluster_data,const 
             {
                 if(!it2->is_checked)
                 {
-
                     double dist=sqrt((best_cluster->index[0]-it2->index[0]) * (best_cluster->index[0]-it2->index[0]) + (best_cluster->index[1]-it2->index[1]) * (best_cluster->index[1]-it2->index[1]));
                     if(dist < neighborSize)
                     {
@@ -399,6 +451,120 @@ void rgbdDetector::nonMaximaSuppression(vector<ClusterData>& cluster_data,const 
     int p=0;
 }
 
+void rgbdDetector::nonMaximaSuppressionUsingIOU(vector<ClusterData>& cluster_data,const double& neighborSize, vector<Rect>& Rects_,std::map<std::vector<int>, std::vector<linemod::Match> >& map_match)
+{
+
+  //Add matches to cluster data
+  vector<ClusterData>::iterator it1=cluster_data.begin();
+  for(;it1!=cluster_data.end();++it1)
+  {
+      std::map<std::vector<int>, std::vector<linemod::Match> >::iterator it2;
+      it2=map_match.find(it1->index);
+      it1->matches=it2->second;
+
+      //Compute BBox
+      int X=0; int Y=0; int WIDTH=0; int HEIGHT=0; int max_width=0; int max_height=0;
+      std::vector<linemod::Match>::iterator it3=it1->matches.begin();
+      for(;it3!=it1->matches.end();++it3)
+      {
+          Rect tmp=Rects_[it3->template_id];
+          X+=it3->x;
+          Y+=it3->y;
+          //Use average width/height
+          WIDTH+=tmp.width;
+          HEIGHT+=tmp.height;
+      }
+      X/=it1->matches.size();
+      Y/=it1->matches.size();
+      WIDTH/=it1->matches.size();
+      HEIGHT/=it1->matches.size();
+      it1->rect=Rect(X,Y,WIDTH,HEIGHT);
+
+  }
+
+  //Sort scores
+  std::sort(cluster_data.begin(),cluster_data.end(),sortScoreCluster);
+
+  //Non-maxima suppression
+  it1=cluster_data.begin();
+  std::map<std::vector<int>, std::vector<linemod::Match> > nms_map_match;
+  for(;it1!=cluster_data.end();++it1)
+  {
+      if(!it1->is_checked)
+      {
+          vector<ClusterData>::iterator it2=it1;
+          it2++;
+          //Look for local maxima
+          for(;it2!=cluster_data.end();++it2)
+          {
+              if(!it2->is_checked)
+              {
+                  double IoU=computeIoU(it1->rect, it2->rect);
+                  if(IoU > 0.4)
+                  {
+                      it2->is_checked=true;
+                  }
+              }
+          }
+      }
+  }
+
+  vector<ClusterData> nms_cluster_data;
+  it1=cluster_data.begin();
+  for(;it1!=cluster_data.end();++it1)
+  {
+    if(!it1->is_checked)
+      nms_cluster_data.push_back(*it1);
+  }
+
+  cluster_data.clear();
+  cluster_data=nms_cluster_data;
+}
+
+float rgbdDetector::computeIoU(cv::Rect rect1, cv::Rect rect2)
+{
+  int rect1_minX, rect1_minY, rect1_maxX, rect1_maxY;
+  int rect2_minX, rect2_minY, rect2_maxX, rect2_maxY;
+
+  rect1_minX = rect1.x;
+  rect1_maxX = rect1.x + rect1.width-1;
+  rect1_minY = rect1.y;
+  rect1_maxY = rect1.y + rect1.height-1;
+
+  rect2_minX = rect2.x;
+  rect2_maxX = rect2.x + rect2.width-1;
+  rect2_minY = rect2.y;
+  rect2_maxY = rect2.y + rect2.height-1;
+
+  int minX = MAX(rect1_minX, rect2_minX);
+  int maxX = MIN(rect1_maxX, rect2_maxX);
+  int minY = MAX(rect1_minY, rect2_minY);
+  int maxY = MIN(rect1_maxY, rect2_maxY);
+
+  bool is_x_inter = false;
+  bool is_y_inter = false;
+
+  if( (minX >= rect1_minX && minX <= rect1_maxX) || (minX >= rect2_minX && minX <= rect2_maxX) )
+    is_x_inter = true;
+  if( (minY >= rect1_minY && minY <= rect1_maxY) || (minY >= rect2_minY && minY <= rect2_maxY) )
+    is_y_inter = true;
+
+  float inter_area;
+  if(is_x_inter && is_y_inter)
+  {
+    inter_area = (maxX - minX + 1) * (maxY - minY +1);
+  }
+  else
+  {
+    inter_area = 0.0;
+  }
+  float union_area = rect1.width * rect1.height + rect2.width * rect2.height - inter_area;
+
+  float IoU = inter_area / union_area;
+
+  return IoU;
+}
+
 double rgbdDetector::getClusterScore(const double& depth_diff_score,const double& normal_diff_score)
 {
     //Simply add two scores
@@ -409,7 +575,7 @@ double rgbdDetector::getClusterScore(const double& depth_diff_score,const double
 
 }
 
-void rgbdDetector::getRoughPoseByClustering(vector<ClusterData>& cluster_data,PointCloudXYZ::Ptr pc,vector<Mat>& Rs_,vector<Mat>& Ts_, vector<double>& Distances_,vector<double>& Obj_origin_dists,float orientation_clustering_th_,RendererIterator *renderer_iterator_,double& renderer_focal_length_x,double& renderer_focal_length_y,IMAGE_WIDTH& image_width,int& bias_x,Eigen::Matrix3d orientation_modify_matrix)
+void rgbdDetector::getRoughPoseByClustering(vector<ClusterData>& cluster_data,PointCloudXYZ::Ptr pc,vector<Mat>& Rs_,vector<Mat>& Ts_, vector<double>& Distances_,vector<double>& Obj_origin_dists,float orientation_clustering_th_,RendererIterator *renderer_iterator_,double& renderer_focal_length_x,double& renderer_focal_length_y,IMAGE_WIDTH& image_width,int& bias_x)
 {
     //For each cluster
     for(vector<ClusterData>::iterator it = cluster_data.begin();it!=cluster_data.end();++it)
@@ -462,22 +628,24 @@ void rgbdDetector::getRoughPoseByClustering(vector<ClusterData>& cluster_data,Po
         std::sort(xyClusters.begin(),xyClusters.end(),sortXyCluster);
 
         //Test display all the poses in 1st cluster
-//        for(int i=0;i<idClusters[0].size();++i)
-//        {
-//            int ID=idClusters[0][i];
-//            //get the pose
-//            cv::Matx33d R_match = Rs_[ID].clone();// rotation of the object w.r.t to the view point
-//            cv::Vec3d T_match = Ts_[ID].clone();//the translation of the camera with respect to the current view point
-//            //cv::Mat K_matrix= Ks_[ID].clone();
-//            cv::Mat mask;
-//            cv::Rect rect;
-//            cv::Matx33d R_temp(R_match.inv());//rotation of the viewpoint w.r.t the object
-//            cv::Vec3d up(-R_temp(0,1), -R_temp(1,1), -R_temp(2,1));//the negative direction of y axis of viewpoint w.r.t object frame
-//            cv::Mat depth_ref_;
-//            renderer_iterator_->renderDepthOnly(depth_ref_, mask, rect, -T_match, up);
+        for(int i=0;i<idClusters[0].size();++i)
+        {
+            int ID=idClusters[0][i];
+            //get the pose
+            cv::Matx33d R_match = Rs_[ID].clone();// rotation of the object w.r.t to the view point
+            cv::Vec3d T_match = Ts_[ID].clone();//the translation of the camera with respect to the current view point
+            //cv::Mat K_matrix= Ks_[ID].clone();
+            cv::Mat mask;
+            cv::Rect rect;
+            cv::Matx33d R_temp(R_match.inv());//rotation of the viewpoint w.r.t the object
+            cv::Vec3d up(-R_temp(0,1), -R_temp(1,1), -R_temp(2,1));//the negative direction of y axis of viewpoint w.r.t object frame
+            cv::Mat depth_ref_, rgb_ref_;
+            renderer_iterator_->renderDepthOnly(depth_ref_, mask, rect, -T_match, up);
+            renderer_iterator_->renderImageOnly(rgb_ref_, rect, -T_match, up);
 //            imshow("mask",mask);
+//            imshow("rgb image",rgb_ref_);
 //            waitKey(0);
-//        }
+        }
 
        //Average all poses in 1st cluster
         Eigen::Vector3d T_aver(0.0,0.0,0.0);
@@ -536,16 +704,19 @@ void rgbdDetector::getRoughPoseByClustering(vector<ClusterData>& cluster_data,Po
         cv::Matx33d R_cam = R_match.inv();
         cv::Vec3d up(-R_cam(0,1), -R_cam(1,1), -R_cam(2,1));//the negative direction of y axis of viewpoint w.r.t object frame
         cv::Mat depth_render, flip_depth_render;
+        cv::Mat image_render;
         cv::Vec3d T_match;
         T_match[0]=T_aver[0];
         T_match[1]=T_aver[1];
         T_match[2]=T_aver[2];
         renderer_iterator_->renderDepthOnly(depth_render, mask, mask_rect, -T_match, up);
+        renderer_iterator_->renderImageOnly(image_render, mask_rect, -T_match, up);
         cv::flip(depth_render,flip_depth_render,0);
         cv::flip(mask,flip_mask,0);
-        imshow("flip_mask oupt",flip_mask);
-        imshow("mask oupt",mask);
-        waitKey(0);
+//        imshow("flip_mask oupt",flip_mask);
+       imshow("mask output",mask);
+       imshow("rgb image output", image_render);
+       waitKey(0);
 
         //Save mask
         it->mask=flip_mask;
@@ -638,12 +809,14 @@ void rgbdDetector::getRoughPoseByClustering(vector<ClusterData>& cluster_data,Po
         PointCloudXYZ::Ptr scene_pc(new PointCloudXYZ);
         extractPointsByIndices(indices,pc,scene_pc,false,false);
 
-//        pcl::visualization::PCLVisualizer view("v");
-//        view.addPointCloud(it->model_pc,"model");
-//        view.addPointCloud(scene_pc,"scene");
-//        Eigen::Affine3f obj_pose_f=it->pose.cast<float>();
-//        view.addCoordinateSystem(0.08,obj_pose_f);
-//        view.spin();
+        //Viz for test
+        pcl::visualization::PCLVisualizer view("v");
+        pcl::visualization::PointCloudColorHandlerCustom<pcl::PointXYZ> model_pc_color(it->model_pc,0,255,0);
+        view.addPointCloud(it->model_pc,model_pc_color,"model");
+        view.addPointCloud(scene_pc,"scene");
+        Eigen::Affine3f obj_pose_f=it->pose.cast<float>();
+        view.addCoordinateSystem(0.08,obj_pose_f);
+        view.spin();
 
         //Remove Nan points
         vector<int> index;
@@ -1424,9 +1597,9 @@ pcl::PointIndices::Ptr rgbdDetector::getPointCloudIndices(vector<ClusterData>::i
     int x_cropped=0;
     int y_cropped=0;
     Mat cropped_mask=it->mask(mask_rect);
-    imshow("crop mask",cropped_mask);
-    imshow("uncrop mask",it->mask);
-    waitKey(0);
+//    imshow("crop mask",cropped_mask);
+//    imshow("uncrop mask",it->mask);
+//    waitKey(0);
     pcl::PointIndices::Ptr indices(new pcl::PointIndices);
     for(int i=0;i<cropped_mask.rows;++i)
     {

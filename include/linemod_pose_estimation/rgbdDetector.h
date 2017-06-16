@@ -124,6 +124,11 @@ bool sortXyCluster(const vector<pair<int,int> >& cluster1,const vector<pair<int,
     return(cluster1.size()>cluster2.size());
 }
 
+bool sortScoreCluster(const ClusterData& cluster1,const ClusterData& cluster2)
+{
+    return(cluster1.score>cluster2.score);
+}
+
 bool sortRegionIndx(const pcl::PointIndices& indice1,const pcl::PointIndices& indice2)
 {
     return(indice1.indices.size()>indice2.indices.size());
@@ -166,7 +171,11 @@ public:
 
     void nonMaximaSuppression(vector<ClusterData>& cluster_data,const double& neighborSize, vector<Rect>& Rects_,std::map<std::vector<int>, std::vector<linemod::Match> >& map_match);
 
-    void getRoughPoseByClustering(vector<ClusterData>& cluster_data, PointCloudXYZ::Ptr pc, vector<Mat> &Rs_, vector<Mat> &Ts_, vector<double> &Distances_, vector<double> &Obj_origin_dists, float orientation_clustering_th_, RendererIterator *renderer_iterator_, double &renderer_focal_length_x, double& renderer_focal_length_y, IMAGE_WIDTH &image_width, int& bias_x, Eigen::Matrix3d orientation_modify_matrix);
+    void nonMaximaSuppressionUsingIOU(vector<ClusterData>& cluster_data,const double& neighborSize, vector<Rect>& Rects_,std::map<std::vector<int>, std::vector<linemod::Match> >& map_match);
+
+    float computeIoU(cv::Rect rect1, cv::Rect rect2);
+
+    void getRoughPoseByClustering(vector<ClusterData>& cluster_data, PointCloudXYZ::Ptr pc, vector<Mat> &Rs_, vector<Mat> &Ts_, vector<double> &Distances_, vector<double> &Obj_origin_dists, float orientation_clustering_th_, RendererIterator *renderer_iterator_, double &renderer_focal_length_x, double& renderer_focal_length_y, IMAGE_WIDTH &image_width, int& bias_x);
 
     bool orientationCompare(Eigen::Matrix3d& orien1,Eigen::Matrix3d& orien2,double thresh);
 

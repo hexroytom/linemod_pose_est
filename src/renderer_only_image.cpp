@@ -155,18 +155,18 @@ int main(int argc,char** argv)
         {
         renderer_n_points_ = 150;
         renderer_angle_step_ = 10;
-        renderer_radius_min_ = 0.6;
+        renderer_radius_min_ = 0.5;
         renderer_radius_max_ = 0.7;
-        renderer_radius_step_ = 0.05;
-        renderer_width_ = 640;
+        renderer_radius_step_ = 0.1;
+        renderer_width_ = 752;
         renderer_height_ = 480;
         renderer_near_ = 0.1;
         renderer_far_ = 1000.0;
-        renderer_focal_length_x_ = 535.566011;//Kinect ;//carmine 535.566011; //dataset 571.9737
-        renderer_focal_length_y_ = 537.168115;//Kinect //carmine 537.168115;  //dataset 571.0073
-        stl_file="/home/yake/catkin_ws/src/linemod_pose_est/config/stl/triangle_board.STL";
-        template_output_path="/home/yake/catkin_ws/src/linemod_pose_est/config/data/triangle_board_line2d_carmine_templates.yml";
-        renderer_params_output_path="/home/yake/catkin_ws/src/linemod_pose_est/config/data/triangle_board_line2d_carmine_renderer_params.yml";
+        renderer_focal_length_x_ = 826.119324;//Kinect ;//carmine 535.566011; //dataset 571.9737
+        renderer_focal_length_y_ = 826.119324;//Kinect //carmine 537.168115;  //dataset 571.0073
+        stl_file="/home/yake/catkin_ws/src/linemod_pose_est/config/stl/t_pipe_connector.stl";
+        template_output_path="/home/yake/catkin_ws/src/linemod_pose_est/config/data/t_pipe_linemod_ensenso_templates.yml";
+        renderer_params_output_path="/home/yake/catkin_ws/src/linemod_pose_est/config/data/t_pipe_linemod_ensenso_renderer_params.yml";
 
     }else{
      renderer_n_points_ = 150;
@@ -194,8 +194,8 @@ int main(int argc,char** argv)
     renderer_iterator.radius_max_ = float(renderer_radius_max_);
     renderer_iterator.radius_step_ = float(renderer_radius_step_);
 
-    cv::Mat image, depth, mask;
-    cv::Matx33d R;
+    cv::Mat image, depth, mask,flip_mask,flip_depth,flip_image;;
+    cv::Matx33d R_cam,R;
     cv::Vec3d T;
     cv::Matx33f K;
     std::vector<cv::Mat> Rs_;
@@ -216,77 +216,75 @@ int main(int argc,char** argv)
       std::cout << status.str();
 
       cv::Rect rect;
-      bool is_restricted=true;
+      bool is_restricted=false;
       bool is_image_valid;
-      renderer_iterator.render(image, depth, mask, rect,is_restricted,is_image_valid);
-      if(is_image_valid)
+      renderer_iterator.render(image, depth, mask, rect);
+      cv::flip(mask,flip_mask,0);
+      cv::flip(depth,flip_depth,0);
+      cv::flip(image,flip_image,0);
+
+      R_cam = renderer_iterator.R_cam();
+      R = R_cam.inv();
+      T = renderer_iterator.T();
+      //D_obj distance from camera to object origin
+      double surface_center=double(depth.at<ushort>(depth.rows/2.0f, depth.cols/2.0f)/1000.0f);
+      double distance;
+      if(surface_center==0)
       {
-          R = renderer_iterator.R_obj();
-          T = renderer_iterator.T();
-          //D_obj distance from camera to object origin
-          double surface_center=double(depth.at<ushort>(depth.rows/2.0f, depth.cols/2.0f)/1000.0f);
-          double distance;
-          if(surface_center==0)
-          {
-              //          cv::Scalar depth_total=cv::sum(depth);
-              //          cv::Scalar tmp=cv::sum(mask);
-              //          int num_elem=tmp[0]/255;
-              //          double depth_aver=depth_total[0]/(1000*num_elem);
-              //          surface_center=depth_aver;
-              distance = (double)renderer_iterator.D_obj() - surface_center;
-          }else
-          {
-              distance = (double)renderer_iterator.D_obj() - surface_center;
-          }
-          double obj_origin_dist=(double)renderer_iterator.D_obj();
-          K = cv::Matx33f(float(renderer_focal_length_x_), 0.0f, float(rect.width)/2.0f, 0.0f, float(renderer_focal_length_y_), float(rect.height)/2.0f, 0.0f, 0.0f, 1.0f);
-
-          std::vector<cv::Mat> sources(1);
-          sources[0] = image;
-
-
-          // Display the rendered image
-          if (true)
-          {
-              cv::namedWindow("Rendering RGB");
-              cv::namedWindow("Rendering Depth");
-              cv::namedWindow("Rendering Mask");
-              if (!image.empty()) {
-                  cv::imshow("Rendering RGB", image);
-                  cv::imshow("Rendering Depth", depth);
-                  cv::imshow("Rendering Mask", mask);
-                  cv::waitKey(1);
-              }
-          }
-
-
-          int template_in = detector_->addTemplate(sources, "coke", mask);
-          if (template_in == -1)
-          {
-              // Delete the status
-              for (size_t j = 0; j < status.str().size(); ++j)
-                  std::cout << '\b';
-              continue;
-          }
-
-          // Also store the pose of each template
-          Rs_.push_back(cv::Mat(R));
-          Ts_.push_back(cv::Mat(T));
-          distances_.push_back(distance);
-          Ks_.push_back(cv::Mat(K));
-          Rects_.push_back(rect);
-          Origin_dists_.push_back (obj_origin_dist);
-
-          //Store depth image, mask and rect
-          //      depth_img.push_back(depth);
-          //      masks.push_back(mask);
-          //      rects.push_back(rect);
-
-          // Delete the status
-          for (size_t j = 0; j < status.str().size(); ++j)
-              std::cout << '\b';
+        distance = (double)renderer_iterator.D_obj() - surface_center;
+      }else
+      {
+        distance = (double)renderer_iterator.D_obj() - surface_center;
       }
+      double obj_origin_dist=(double)renderer_iterator.D_obj();
+      K = cv::Matx33f(float(renderer_focal_length_x_), 0.0f, float(flip_image.cols)/2.0f, 0.0f, float(renderer_focal_length_y_), float(flip_image.rows)/2.0f, 0.0f, 0.0f, 1.0f);
+
+      std::vector<cv::Mat> sources(1);
+      sources[0] = flip_image;
+
+
+      // Display the rendered image
+      if (true)
+      {
+        cv::namedWindow("Rendering RGB");
+        cv::namedWindow("Rendering Depth");
+        cv::namedWindow("Rendering Mask");
+        if (!image.empty()) {
+          cv::imshow("Rendering RGB", image);
+          cv::imshow("Rendering Depth", depth);
+          cv::imshow("Rendering Mask", mask);
+          cv::waitKey(1);
+        }
+      }
+
+
+      int template_in = detector_->addTemplate(sources, "obj", flip_mask);
+      if (template_in == -1)
+      {
+        // Delete the status
+        for (size_t j = 0; j < status.str().size(); ++j)
+          std::cout << '\b';
+        continue;
+      }
+
+      // Also store the pose of each template
+      Rs_.push_back(cv::Mat(R));
+      Ts_.push_back(cv::Mat(T));
+      distances_.push_back(distance);
+      Ks_.push_back(cv::Mat(K));
+      Rects_.push_back(rect);
+      Origin_dists_.push_back (obj_origin_dist);
+
+      //Store depth image, mask and rect
+      //      depth_img.push_back(depth);
+      //      masks.push_back(mask);
+      //      rects.push_back(rect);
+
+      // Delete the status
+      for (size_t j = 0; j < status.str().size(); ++j)
+        std::cout << '\b';
     }
+
 
     writeLinemod (detector_,template_output_path);
     writeLinemodTemplateParams (renderer_params_output_path,
