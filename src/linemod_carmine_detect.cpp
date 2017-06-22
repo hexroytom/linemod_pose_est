@@ -336,7 +336,7 @@ public:
                 std::vector<cv::linemod::Template> templates=detector->getTemplates(it->class_id, it->template_id);
                 drawResponse(templates, 1, display,cv::Point(it->x,it->y), 2);
             }
-//            imshow("intial results",display);
+            imshow("intial results",display);
 //            waitKey(0);
                 //Rectangle
 //            for(std::vector<linemod::Match>::iterator it= matches.begin();it != matches.end();it++)

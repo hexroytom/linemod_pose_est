@@ -289,16 +289,6 @@ int main(int argc,char** argv)
           sources[0] = flip_image;
           //sources[1] = flip_depth;
 
-//          cv::Mat temp_depth,temp_mask;
-//          cv::Rect temp_mask_rect;
-//          cv::Vec3d temp_T_match;
-//          cv::Vec3d temp_up;
-//          cv::Matx33d temp_R_cam=R_obj.inv();
-//          temp_T_match = T;
-//          temp_up = cv::Vec3d(-temp_R_cam(0,1), -temp_R_cam(1,1), -temp_R_cam(2,1));
-//          renderer_iterator.renderDepthOnly(temp_depth, temp_mask, temp_mask_rect, -temp_T_match, temp_up);
-//          imshow("temp mask",temp_mask);
-
           // Display the rendered image
           if (true)
           {
@@ -315,77 +305,6 @@ int main(int argc,char** argv)
               }
           }
 
-//          cv::Mat pc_cv;
-//          pcl::PointCloud<pcl::PointXYZ>::Ptr model_pc(new pcl::PointCloud<pcl::PointXYZ>);
-//          cv::Mat K_matrix=(cv::Mat_<double>(3,3)<<renderer_focal_length_x_,0.0,depth.cols/2,
-//                                        0.0,renderer_focal_length_y_,depth.rows/2,
-//                                        0.0,0.0,1.0);
-//          Eigen::Affine3d obj_pose,obj_pose2;
-//          obj_pose = Eigen::Affine3d::Identity();
-//          //cv orientation ---> eigen orientation
-//          Eigen::Matrix<double,3,3> R_eig;
-//          cv::cv2eigen(cv::Mat(R),R_eig);
-
-//          cv::Vec3d t_obj_pCamera = (-1)*(R_cam.t())*(-1)*(T);
-//          cv::Matx33d R_obj_pCamera = R_cam.t();
-//          Eigen::Matrix<double,3,3> R_obj_pCamera_eig;
-//          cv::cv2eigen(cv::Mat(R_obj_pCamera),R_obj_pCamera_eig);
-//          obj_pose.linear() = R_eig;
-//          obj_pose.translation()<<0, 0, -renderer_iterator.D_obj();
-//          obj_pose2.linear() = R_obj_pCamera_eig;
-//          obj_pose2.translation()<<t_obj_pCamera(0), t_obj_pCamera(1), t_obj_pCamera(2);
-//          Eigen::Affine3d cam_pose = obj_pose.inverse();
-//          Eigen::Affine3d cam_pose2 = obj_pose2.inverse();
-
-//          model_pc->header.frame_id="/obj_link";
-//          cv::depthTo3d(flip_depth,K_matrix,pc_cv);    //mm ---> m
-//          for(int ii=0;ii<pc_cv.rows;++ii)
-//          {
-//              double* row_ptr=pc_cv.ptr<double>(ii);
-//              for(int jj=0;jj<pc_cv.cols;++jj)
-//              {
-//                  if(flip_mask.at<uchar>(ii,jj)>0)
-//                  {
-//                      double* data =row_ptr+jj*3;
-////                      //Desire result
-////                      double desire_x,desire_y,desire_z;
-////                      desire_x=data[2]*(jj-320)/renderer_focal_length_x_;
-////                      desire_y=data[2]*(ii-240)/renderer_focal_length_y_;
-////                      desire_z=data[2];
-////                      cout<<"Desire coordinates: "<<desire_x<<" "<<desire_y<<" "<<desire_z<<endl;
-////                      cout<<"Actual coordinates: "<<data[0]<<" "<<data[1]<<" "<<data[2]<<endl;
-//                      model_pc->points.push_back(pcl::PointXYZ(data[0],data[1],data[2]));
-//                  }
-//              }
-//          }
-//          model_pc->height=1;
-//          model_pc->width=model_pc->points.size();
-//          pcl::transformPointCloud(*model_pc,*model_pc,cam_pose2.cast<float>());
-
-//          tf::Transform pose_tf;
-//          tf::poseEigenToTF(cam_pose2,pose_tf);
-//          geometry_msgs::Pose pose_msg;
-//          tf::poseTFToMsg(pose_tf,pose_msg);
-//          geometry_msgs::PoseStamped pose_stamped_msg;
-//          pose_stamped_msg.pose=pose_msg;
-//          pose_stamped_msg.header.frame_id="/obj_link";
-//          pose_stamped_msg.header.stamp=ros::Time::now();
-//          pose_pub.publish(pose_stamped_msg);
-
-//          sensor_msgs::PointCloud2 ros_pointcloud;
-//          ros_pointcloud.header.stamp = ros::Time::now();
-//          ros_pointcloud.header.frame_id = "/obj_link";
-//          pcl::toROSMsg(*model_pc,ros_pointcloud);
-//          pointcloud_pub.publish(ros_pointcloud);
-
-//          //Full obj pointcloud
-//          sensor_msgs::PointCloud2 ros_pointcloud2;
-//          pcl::PointCloud<pcl::PointXYZ>::Ptr model_pc2(new pcl::PointCloud<pcl::PointXYZ>);
-//          pcl::io::loadPLYFile(ply_file_path,*model_pc2);
-//          pcl::toROSMsg(*model_pc2,ros_pointcloud2);
-//          ros_pointcloud2.header.stamp = ros::Time::now();
-//          ros_pointcloud2.header.frame_id = "/obj_link";
-//          pointcloud_pub2.publish(ros_pointcloud2);
           cv::waitKey(1);
 
           int template_in = detector_->addTemplate(sources, "obj", flip_mask);
@@ -404,11 +323,6 @@ int main(int argc,char** argv)
           Ks_.push_back(cv::Mat(K));
           Origin_dists_.push_back (obj_origin_dist);
           rects.push_back(rect);
-
-          //Store depth image, mask and rect
-          //      depth_img.push_back(depth);
-          //      masks.push_back(mask);
-          //      rects.push_back(rect);
 
           // Delete the status
           for (size_t j = 0; j < status.str().size(); ++j)
@@ -435,7 +349,7 @@ int main(int argc,char** argv)
                                 renderer_focal_length_y_,
                                 renderer_near_,
                                 renderer_far_);
-    //writeLinemodRender(renderer_depth_output_path,depth_img,masks,rects);
+
 
       return 0;
 

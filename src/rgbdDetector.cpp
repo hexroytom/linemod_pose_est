@@ -248,7 +248,6 @@ double rgbdDetector::depth_diff(Mat& depth_img,Mat& depth_template,cv::Mat& temp
     //-------- Method A for computing depth diff----//
     Mat subtraction(depth_roi.size(),CV_16SC1);
     subtraction=depth_template-depth_roi;
-    cout<<subtraction<<endl;
     MatIterator_<uchar> it_mask=mask.begin<uchar>();
     MatIterator_<short> it_subs=subtraction.begin<short>();
     double sum=0.0;
@@ -258,7 +257,6 @@ double rgbdDetector::depth_diff(Mat& depth_img,Mat& depth_template,cv::Mat& temp
         if(*it_mask>0)
         {
             //sum=sum+(double)(1/(abs(*it_subs)+1));
-          cout<<"subtraction "<<*it_subs<<endl;
             sum=sum+(double)(abs(*it_subs));
             num++;
         }
