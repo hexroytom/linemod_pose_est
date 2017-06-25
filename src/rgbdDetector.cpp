@@ -115,9 +115,9 @@ void rgbdDetector::cluster_scoring(RendererIterator *renderer_iterator_,Matx33d&
     for(;it_map!=map_match.end();++it_map)
     {
         //Perform depth difference computation and normal difference computation
-        double score=depth_normal_diff_calc(renderer_iterator_,K_rgb,Rs_,Ts_,it_map->second,depth_img);
+        //double score=depth_normal_diff_calc(renderer_iterator_,K_rgb,Rs_,Ts_,it_map->second,depth_img);
         //Options: similairy score computation
-        //double score=similarity_score_calc(it_map->second);
+        double score=similarity_score_calc(it_map->second);
         cluster_data.push_back(ClusterData(it_map->first,score));
 
     }
@@ -812,13 +812,13 @@ void rgbdDetector::getRoughPoseByClustering(vector<ClusterData>& cluster_data,Po
         extractPointsByIndices(indices,pc,scene_pc,false,false);
 
         //Viz for test
-//        pcl::visualization::PCLVisualizer view("v");
-//        pcl::visualization::PointCloudColorHandlerCustom<pcl::PointXYZ> model_pc_color(it->model_pc,0,255,0);
-//        view.addPointCloud(it->model_pc,model_pc_color,"model");
-//        view.addPointCloud(scene_pc,"scene");
-//        Eigen::Affine3f obj_pose_f=it->pose.cast<float>();
-//        view.addCoordinateSystem(0.08,obj_pose_f);
-//        view.spin();
+        pcl::visualization::PCLVisualizer view("v");
+        pcl::visualization::PointCloudColorHandlerCustom<pcl::PointXYZ> model_pc_color(it->model_pc,0,255,0);
+        view.addPointCloud(it->model_pc,model_pc_color,"model");
+        view.addPointCloud(scene_pc,"scene");
+        Eigen::Affine3f obj_pose_f=it->pose.cast<float>();
+        view.addCoordinateSystem(0.08,obj_pose_f);
+        view.spin();
 
         //Remove Nan points
         vector<int> index;

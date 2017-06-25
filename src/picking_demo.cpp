@@ -1,9 +1,6 @@
 #include <linemod_pose_estimation/rgbdDetector.h>
 
 //ork
-#include "linemod_icp.h"
-#include "linemod_pointcloud.h"
-#include "db_linemod.h"
 #include <object_recognition_renderer/renderer3d.h>
 #include <object_recognition_renderer/utils.h>
 
@@ -300,12 +297,13 @@ public:
 
             //Pose refinement
             t=cv::getTickCount ();
-            rgbd_detector.icpPoseRefine(tmp,icp,pc_ptr,image_width,bias_x,false);
+            rgbd_detector.icpPoseRefine(tmp,icp,pc_ptr,image_width,bias_x,true);
             t=(cv::getTickCount ()-t)/cv::getTickFrequency ();
             cout<<"Time consumed by pose refinement: "<<t<<endl;
 
+
             //Hypothesis verification
-            rgbd_detector.hypothesisVerification(tmp,0.004,0.30,false);
+            rgbd_detector.hypothesisVerification(tmp,0.004,0.30,true);
 
             if(tmp.size() == 1)
             {
@@ -1071,21 +1069,21 @@ int main(int argc,char** argv)
     ensenso::RegistImage srv;
     srv.request.is_rgb=true;
    //-----------------------------------images from dataset----------------------------------//
-//    string img_path=argv[12];
-//    string pc_path=argv[13];
-//    ros::Time now =ros::Time::now();
-//    Mat cv_img=imread(img_path,IMREAD_COLOR);
-//    cv_bridge::CvImagePtr bridge_img_ptr(new cv_bridge::CvImage);
-//    bridge_img_ptr->image=cv_img;
-//    bridge_img_ptr->encoding="bgr8";
-//    bridge_img_ptr->header.stamp=now;
-//    srv.response.image = *bridge_img_ptr->toImageMsg();
+    string img_path=argv[12];
+    string pc_path=argv[13];
+    ros::Time now =ros::Time::now();
+    Mat cv_img=imread(img_path,IMREAD_COLOR);
+    cv_bridge::CvImagePtr bridge_img_ptr(new cv_bridge::CvImage);
+    bridge_img_ptr->image=cv_img;
+    bridge_img_ptr->encoding="bgr8";
+    bridge_img_ptr->header.stamp=now;
+    srv.response.image = *bridge_img_ptr->toImageMsg();
 
-//    PointCloudXYZ::Ptr pc(new PointCloudXYZ);
-//    pcl::io::loadPCDFile(pc_path,*pc);
-//    pcl::toROSMsg(*pc,srv.response.pointcloud);
-//    srv.response.pointcloud.header.frame_id="/camera_link";
-//    srv.response.pointcloud.header.stamp=now;
+    PointCloudXYZ::Ptr pc(new PointCloudXYZ);
+    pcl::io::loadPCDFile(pc_path,*pc);
+    pcl::toROSMsg(*pc,srv.response.pointcloud);
+    srv.response.pointcloud.header.frame_id="/camera_link";
+    srv.response.pointcloud.header.stamp=now;
 
     //Params
     float region_growing_normal_thresh=25.0; //degree
@@ -1110,7 +1108,8 @@ int main(int argc,char** argv)
     while(ros::ok())
     {
         cout<<"Start a new detetcion? Input [y] to begin, or [n] to quit. "<<endl;
-        cin>>cmd;
+//        cin>>cmd;
+        cmd = "y";
         if(cmd == "y")
         {
             detector.getImages(srv);
@@ -1132,7 +1131,7 @@ int main(int argc,char** argv)
                 //Grasping pose generation
                 double t=cv::getTickCount ();
                 Eigen::Affine3d grasp_pose_pDepth;
-                detector.rgbd_detector.graspingPoseBasedOnRegionGrowing (it_target->dense_scene_pc,it_target->scene_pc,region_growing_normal_thresh,region_growing_curvature_thresh,0.0,grasp_pose_pDepth,false);
+                detector.rgbd_detector.graspingPoseBasedOnRegionGrowing (it_target->dense_scene_pc,it_target->scene_pc,region_growing_normal_thresh,region_growing_curvature_thresh,0.0,grasp_pose_pDepth,true);
                 t=(cv::getTickCount()-t)/cv::getTickFrequency ();
                 cout<<"Time consumed by grasping pose generation: "<<t<<endl;
 

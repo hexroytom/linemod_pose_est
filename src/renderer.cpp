@@ -199,25 +199,24 @@ int main(int argc,char** argv)
     std::string template_output_path;
     std::string renderer_params_output_path;
     std::string renderer_depth_output_path;
-    std::string ply_file_path;
 
     if(argc<10)
         {
         renderer_n_points_ = 150;
-        renderer_angle_step_ = 3;
-        renderer_radius_min_ = 0.6;
+        renderer_angle_step_ = 10;
+        renderer_radius_min_ = 0.5;
         renderer_radius_max_ = 0.7;
         renderer_radius_step_ = 0.1;
-        renderer_width_ = 640; //ensenso 752
+        renderer_width_ = 752; //ensenso 752
         renderer_height_ = 480;
         renderer_near_ = 0.1;
         renderer_far_ = 1000.0;
-        renderer_focal_length_x_ = 535.566011;//Kinect ;//carmine 535.566011; //dataset 571.9737
-        renderer_focal_length_y_ = 537.168115;//Kinect //carmine 537.168115;  //dataset 571.0073
-        stl_file="/home/yake/catkin_ws/src/linemod_pose_est/config/stl/rectangle_board.STL";
-        template_output_path="/home/yake/catkin_ws/src/linemod_pose_est/config/data/rectangle_board_linemod_carmine_templates.yml";
-        renderer_params_output_path="/home/yake/catkin_ws/src/linemod_pose_est/config/data/rectangle_board_linemod_carmine_renderer_params.yml";
-        ply_file_path="/home/yake/catkin_ws/src/linemod_pose_est/config/stl/triangle_board.ply";
+        renderer_focal_length_x_ = 846.4281005859375;//Kinect ;//carmine 535.566011; //dataset 571.9737
+        renderer_focal_length_y_ = 846.4281005859375;//Kinect //carmine 537.168115;  //dataset 571.0073
+        stl_file="/home/yake/catkin_ws/src/linemod_pose_est/config/stl/pipe_connector.stl";
+        template_output_path="/home/yake/catkin_ws/src/linemod_pose_est/config/data/pipe_linemod_ensenso_templates.yml";
+        renderer_params_output_path="/home/yake/catkin_ws/src/linemod_pose_est/config/data/pipe_linemod_ensenso_renderer_params.yml";
+
 
     }else{
      renderer_n_points_ = 300;
@@ -267,7 +266,7 @@ int main(int argc,char** argv)
       std::cout << status.str();
 
       cv::Rect rect;
-      bool is_restricted=true;
+      bool is_restricted=false; //Whether the viewport will be restriceted for plannar object
       bool is_image_valid;
       renderer_iterator.render(image, depth, mask, rect,is_restricted,is_image_valid);
       cv::flip(mask,flip_mask,0);
@@ -275,7 +274,7 @@ int main(int argc,char** argv)
       cv::flip(image,flip_image,0);
       if(is_image_valid)
       {
-          R = renderer_iterator.R_obj();   //obj pose
+          R = renderer_iterator.R_obj();   //obj orientation
           T = renderer_iterator.T();  //negative camera position
           R_cam = renderer_iterator.R_cam(); //camera orientation
           cv::Matx33d R_obj = R_cam.inv();
@@ -296,11 +295,9 @@ int main(int argc,char** argv)
               cv::namedWindow("Rendering Depth");
               cv::namedWindow("Rendering Mask");
               if (!image.empty()) {
-                  cv::imshow("Rendering RGB", image);
-                  cv::imshow("Rendering Depth", depth);
-                  cv::imshow("Rendering Mask", mask);
-                  cv::imshow("Rendering Flip Mask", flip_mask);
-                  cv::imshow("Rendering Flip RGB", flip_image);
+                  cv::imshow("Rendering RGB", flip_image);
+                  cv::imshow("Rendering Depth", flip_depth);
+                  cv::imshow("Rendering Mask", flip_mask);
 
               }
           }

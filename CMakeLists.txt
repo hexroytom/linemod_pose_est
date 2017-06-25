@@ -155,8 +155,8 @@ add_executable(renderer_node src/renderer.cpp)
 #--------Detector--------#
 add_executable(linemod_ensenso_detect_node src/linemod_ensenso_detect.cpp)
 add_executable(linemod_carmine_detect_node src/linemod_carmine_detect.cpp)
-#add_executable(linemod_dataset_detect_node src/linemod_dataset_detect.cpp src/linemod_icp.cpp src/linemod_pointcloud.cpp)
-#add_executable(picking_demo_node src/picking_demo.cpp src/linemod_icp.cpp src/linemod_pointcloud.cpp)
+#add_executable(linemod_dataset_detect_node src/linemod_dataset_detect.cpp  )
+add_executable(picking_demo_node src/picking_demo.cpp )
 
 
 #--------Tool----------#
@@ -206,13 +206,13 @@ target_link_libraries(linemod_carmine_detect_node
 #  rgbdDetector
 #)
 
-#target_link_libraries(picking_demo_node
-#  ${catkin_LIBRARIES}
-#  ${OpenCV_LIBRARIES}
-#  ${PCL_LIBRARIES}
-#  rgbdDetector
-#  ${orocos_kdl_LIBRARIES}
-#)
+target_link_libraries(picking_demo_node
+  ${catkin_LIBRARIES}
+  ${OpenCV_LIBRARIES}
+  ${PCL_LIBRARIES}
+  rgbdDetector
+  ${orocos_kdl_LIBRARIES}
+)
 
 target_link_libraries(rgbdDetector
   ${catkin_LIBRARIES}
