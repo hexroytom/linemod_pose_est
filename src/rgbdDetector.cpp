@@ -100,9 +100,9 @@ void rgbdDetector::cluster_scoring(std::map<std::vector<int>, std::vector<linemo
     std::map<std::vector<int>, std::vector<linemod::Match> >::iterator it_map= map_match.begin();
     for(;it_map!=map_match.end();++it_map)
     {
-        //Perform depth difference computation and normal difference computation
+        //Perform depth difference computation and normal difference computation.The process is not optimized so it will be slow when a cluster contains two many templates.
         //double score=depth_normal_diff_calc(it_map->second,depth_img);
-        //Options: similairy score computation
+        //Options: similairy score computation: averaging templates' similarity score.
         double score=similarity_score_calc(it_map->second);
         cluster_data.push_back(ClusterData(it_map->first,score));
 
