@@ -1,9 +1,6 @@
 #include <linemod_pose_estimation/rgbdDetector.h>
 
 //ork
-#include "linemod_icp.h"
-#include "linemod_pointcloud.h"
-#include "db_linemod.h"
 #include <object_recognition_renderer/renderer3d.h>
 #include <object_recognition_renderer/utils.h>
 
@@ -232,7 +229,7 @@ public:
         Mat after_nms=mat_rgb_crop.clone();
         Mat mat_depth_crop=mat_depth(crop);
 
-        //Perform the detection
+        //Perform LINEMOD detection
         std::vector<Mat> sources;
         sources.push_back (mat_rgb_crop);
         //sources.push_back (mat_depth_crop);
@@ -248,7 +245,7 @@ public:
 //            drawResponse(templates, 1, display,cv::Point(it->x,it->y), 2);
 //        }
 
-        //Clustering based on Row Col Depth
+        //Clustering based on Row, Col, Depth
         std::map<std::vector<int>, std::vector<linemod::Match> > map_match;
         rgbd_detector.rcd_voting(Obj_origin_dists,renderer_radius_min,clustering_step_,renderer_radius_step,matches,map_match);
 
@@ -262,7 +259,6 @@ public:
         rgbd_detector.cluster_scoring(map_match,mat_depth,cluster_data);
         t=(cv::getTickCount ()-t)/cv::getTickFrequency ();
         cout<<"Time consumed by scroing: "<<t<<endl;
-
         for(std::map<std::vector<int>, std::vector<linemod::Match> >::iterator it= map_match.begin();it != map_match.end();it++)
         {
             for(std::vector<linemod::Match>::iterator it2=it->second.begin();it2!=it->second.end();++it2)
@@ -699,7 +695,7 @@ public:
 
         //Get tf from BASE to OBJECT
         Eigen::Affine3d pose_baseTgrasp;        
-        pose_baseTgrasp = pose_baseTtool0 * pose_tool0Tdep * pose_rgbTgrasp;
+        pose_baseTgrasp = pose_baseTtool0 * pose_tool0Tdep * pose_rgbTgrasp; //ref frame: depth camera ---> tool0 ---> base
         return pose_baseTgrasp;
     }
 
@@ -1095,15 +1091,16 @@ int main(int argc,char** argv)
     pointcloud_publisher scene_pc_pub(detector.getNodeHandle(),string("/rgbDetect/scene"));
     pointcloud_publisher model_pc_pub(detector.getNodeHandle(),string("/rgbDetect/pick_object"));
 
-    //Bradocast tf from rgb to depth
+    //Bradocast tf from rgb camera to depth camera
     detector.setDepthToRGB_broadcastTF(-54.23,43.00,-25.59,0.25,-0.32,1.31);
+    //Manually input hand-eye calibration result
     detector.setTool0tDepth_broadcastTF(0.0652032, -0.060422, 0.0464063,0.707464, -0.00131294, 0.0106396, 0.706668);
+
+    //Set Non-maximum suppression Param
+    detector.setNonMaximumSuppressionRadisu(nms_neighbor_size);
 
     //Robot initial pose
     detector.moveToLookForTargetsPose(0.3,1.0);
-
-    //Set NMS Param
-    detector.setNonMaximumSuppressionRadisu(nms_neighbor_size);
 
 
     string cmd;
